@@ -1,0 +1,112 @@
+@import "tailwindcss";
+
+@theme {
+  --color-background: #100d15;
+  --color-surface: #1c1623;
+  --color-surface-light: #292033;
+  --color-primary: #842f59;
+  --color-primary-hover: #a23c70;
+  --color-accent: #f3bf69;
+  --color-accent-hover: #ffd58c;
+  --color-foreground: #f9f5fa;
+  --color-muted: #b5aabb;
+  --color-border: #392e43;
+  --color-danger: #ef4444;
+  --color-success: #22c55e;
+
+  --font-sans: Inter, ui-sans-serif, system-ui, sans-serif;
+}
+
+:root {
+  font-family: var(--font-sans);
+  color: var(--color-foreground);
+  background: var(--color-background);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+html {
+  min-width: 320px;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+button:not(:disabled) {
+  cursor: pointer;
+}
+
+a {
+  text-decoration: none;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 3px;
+}
+
+@layer components {
+  .page-container {
+    @apply mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8;
+  }
+
+  .page-section {
+    @apply py-14 sm:py-20;
+  }
+
+  .section-heading {
+    @apply mx-auto mb-10 max-w-2xl text-center;
+  }
+
+  .eyebrow {
+    @apply text-xs font-bold uppercase tracking-[0.2em] text-accent;
+  }
+
+  .page-description {
+    @apply mt-3 text-muted leading-7;
+  }
+
+  .dashboard-grid {
+    @apply mt-8 grid gap-5 md:grid-cols-2 xl:grid-cols-3;
+  }
+
+  .dashboard-card {
+    @apply rounded-2xl border border-border bg-surface p-6;
+  }
+
+  .dashboard-card svg {
+    @apply text-accent;
+  }
+
+  .dashboard-card h3 {
+    @apply mt-4 text-lg font-semibold;
+  }
+
+  .dashboard-card p {
+    @apply mt-2 text-sm leading-6 text-muted;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
