@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 
 import Card from "../../components/ui/Card.jsx";
-
+import CreatorApplicationForm from "../../components/creator/CreatorApplicationForm.jsx";
 import { useAuthStore } from "../../store/useAuthStore.js";
 
 /**
@@ -246,6 +246,16 @@ export default function UserDashboard() {
             </p>
           </Card>
         </div>
+
+        {/* ============================================= */}
+        {/* CREATOR APPLICATION                           */}
+        {/* ============================================= */}
+
+        {role === "USER" && accountStatus === "ACTIVE" && (
+          <div className="mt-8">
+            <CreatorApplicationForm />
+          </div>
+        )}
 
         {/* ============================================= */}
         {/* EXPLORE CREATORS                              */}
