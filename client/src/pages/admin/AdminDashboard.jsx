@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 
 import Card from "../../components/ui/Card.jsx";
-
+import PendingCreatorApplications from "../../components/admin/PendingCreatorApplications.jsx";
 import { useAuthStore } from "../../store/useAuthStore.js";
 
 /**
@@ -43,7 +43,7 @@ const sections = [
     icon: ShieldCheck,
     title: "Verification & Safety",
     description:
-      "Review creator applications, account verification, and reports.",
+      "Review creator applications. Additional verification and moderation tools are planned.",
   },
   {
     icon: ChartNoAxesCombined,
@@ -232,6 +232,22 @@ export default function AdminDashboard() {
           </Card>
         </div>
 
+        
+        {/* ============================================= */}
+        {/* CREATOR APPLICATION MANAGEMENT                */}
+        {/* ============================================= */}
+
+        {isActiveAdmin && (
+          <div
+            id="creator-application-reviews"
+            className="mt-10"
+          >
+            <PendingCreatorApplications />
+          </div>
+        )}
+
+
+
         {/* ============================================= */}
         {/* ADMINISTRATION NOTICE                         */}
         {/* ============================================= */}
@@ -275,10 +291,11 @@ export default function AdminDashboard() {
             Administration Tools
           </h2>
 
-          <p className="mt-2 text-sm text-muted">
-            Platform management capabilities will
-            be introduced as their APIs are built.
-          </p>
+        <p className="mt-2 text-sm text-muted">
+          Manage creator applications and access
+          administrative tools as additional
+          platform features become available.
+        </p>
 
           <div className="dashboard-grid mt-6">
             {sections.map(

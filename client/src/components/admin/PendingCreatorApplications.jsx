@@ -419,9 +419,11 @@ const reviewInProgressRef = useRef(false);
       setApplications(result.applications);
 
       setPagination(nextPagination);
+
+      return true;
     } catch (requestError) {
       if (requestId !== requestSequence.current) {
-        return;
+        return false;
       }
 
       setError(getErrorMessage(requestError));
@@ -434,6 +436,8 @@ const reviewInProgressRef = useRef(false);
       setApplications([]);
 
       setPagination(createEmptyPagination(page));
+
+      return false;
     } finally {
       if (requestId === requestSequence.current) {
         setIsLoading(false);
@@ -477,6 +481,20 @@ const reviewInProgressRef = useRef(false);
    * - Show the backend error
    */
 
+
+  /**
+   * ==========================================================
+   * HANDLE CREATOR APPLICATION REVIEW
+   * ==========================================================
+   *
+   * Review submission and list refreshing are
+   * treated as separate operations.
+   *
+   * A successful backend review must never be
+   * reported as a failed review merely because
+   * the subsequent list refresh fails.
+   */
+
   const handleReview = async (userId, decision) => {
     if (reviewInProgressRef.current) {
       return;
@@ -488,7 +506,15 @@ const reviewInProgressRef = useRef(false);
     setReviewMessage(null);
     setError(null);
 
+    let reviewSucceeded = false;
+
     try {
+      /*
+       * ======================================================
+       * SUBMIT ADMINISTRATOR DECISION
+       * ======================================================
+       */
+
       if (decision === "APPROVE") {
         await approveCreatorApplication(userId);
       } else if (decision === "REJECT") {
@@ -499,6 +525,14 @@ const reviewInProgressRef = useRef(false);
         );
       }
 
+      reviewSucceeded = true;
+
+      /*
+       * ======================================================
+       * REPORT SUCCESSFUL REVIEW
+       * ======================================================
+       */
+
       setReviewMessage({
         type: "success",
         message:
@@ -508,25 +542,49 @@ const reviewInProgressRef = useRef(false);
       });
 
       /*
-       * A successful review removes the application
-       * from the backend's pending applications list.
+       * ======================================================
+       * REFRESH PENDING APPLICATIONS
+       * ======================================================
        *
-       * Refresh the current page after review.
+       * loadApplications returns:
+       *
+       * true  - refreshed successfully
+       * false - refresh failed
        */
 
-      await loadApplications();
+      const refreshed = await loadApplications();
+
+      if (!refreshed) {
+        setReviewMessage({
+          type: "success",
+          message:
+            "The creator application was reviewed successfully. However, the pending applications list could not be refreshed. Please try refreshing the list.",
+        });
+      }
     } catch (reviewError) {
-      setReviewMessage({
-        type: "error",
-        message: getErrorMessage(reviewError),
-      });
+      /*
+       * If the review request itself fails, do not
+       * claim the application was reviewed.
+       *
+       * Network failures may leave the outcome
+       * uncertain. The administrator should
+       * refresh the list before attempting again.
+       */
+
+      if (!reviewSucceeded) {
+        setReviewMessage({
+          type: "error",
+          message:
+            `${getErrorMessage(reviewError)} ` +
+            "If the request timed out or the connection was interrupted, refresh the application list before retrying.",
+        });
+      }
     } finally {
       reviewInProgressRef.current = false;
 
       setReviewingUserId(null);
     }
   };
-
 
 
   const totalApplications = Math.max(

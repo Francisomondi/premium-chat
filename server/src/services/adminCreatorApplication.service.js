@@ -87,12 +87,11 @@ const toAdminApplicationResponse = (user) => {
  *
  * Defense-in-depth authorization.
  *
- * The future admin routes must ALSO use:
+ * Admin routes also enforce:
  *
  * requireAuth
  * requireAdmin
  */
-
 const assertActiveAdmin = async (adminId) => {
   if (!mongoose.isValidObjectId(adminId)) {
     throw new AppError(
