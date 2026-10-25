@@ -1,3 +1,4 @@
+
 import "dotenv/config";
 
 import { createServer } from "node:http";
@@ -11,13 +12,21 @@ import {
   disconnectDB,
 } from "./config/db.js";
 
+import {
+  initializeSocketServer,
+  closeSocketServer,
+} from "./socket/socket.server.js";
+
 /**
  * ============================================================
- * HTTP SERVER
+ * PREMIUMCHAT HTTP + SOCKET.IO SERVER
  * ============================================================
  *
- * Socket.IO will attach to this HTTP server in the
- * real-time chat module.
+ * Express and Socket.IO share the same HTTP server.
+ *
+ * Socket authentication will be implemented in
+ * Module 3.2. Until then, all socket connections
+ * are rejected by the Socket.IO middleware.
  */
 
 const httpServer = createServer(app);
@@ -51,19 +60,34 @@ const shutdown = (signal) => {
     let exitCode = 0;
 
     try {
+      /*
+       * Socket.IO closes its connections and may
+       * also close the underlying HTTP server.
+       *
+       * Close it before attempting to close HTTP.
+       */
+      await closeSocketServer();
+
+      /*
+       * If Socket.IO has already closed HTTP,
+       * do not attempt to close it again.
+       */
       if (httpServer.listening) {
         await new Promise((resolve, reject) => {
           httpServer.close((error) => {
-            if (error) {
+            if (
+              error &&
+              error.code !== "ERR_SERVER_NOT_RUNNING"
+            ) {
               reject(error);
             } else {
               resolve();
             }
           });
         });
-
-        console.log("HTTP server closed.");
       }
+
+      console.log("HTTP server closed.");
 
       await disconnectDB();
 
@@ -75,6 +99,32 @@ const shutdown = (signal) => {
         "Error during shutdown:",
         error.message
       );
+
+      /*
+       * Best-effort cleanup if an earlier
+       * shutdown operation failed.
+       */
+      try {
+        if (httpServer.listening) {
+          await new Promise((resolve, reject) => {
+            httpServer.close((closeError) => {
+              if (
+                closeError &&
+                closeError.code !== "ERR_SERVER_NOT_RUNNING"
+              ) {
+                reject(closeError);
+              } else {
+                resolve();
+              }
+            });
+          });
+        }
+      } catch (httpError) {
+        console.error(
+          "HTTP shutdown error:",
+          httpError.message
+        );
+      }
 
       try {
         await disconnectDB();
@@ -100,7 +150,10 @@ const shutdown = (signal) => {
  */
 
 httpServer.on("error", (error) => {
-  console.error("HTTP server error:", error.message);
+  console.error(
+    "HTTP server error:",
+    error.message
+  );
 
   if (!isShuttingDown) {
     shutdown("HTTP_SERVER_ERROR");
@@ -119,8 +172,21 @@ const startServer = async () => {
     console.log(" PREMIUM CHAT BACKEND");
     console.log("==================================");
 
-    // Connect to MongoDB before accepting requests.
+    /*
+     * Connect to MongoDB before accepting
+     * HTTP requests or Socket.IO connections.
+     */
     await connectDB();
+
+    if (isShuttingDown) {
+      return;
+    }
+
+    /*
+     * Attach Socket.IO to the existing
+     * HTTP server before it starts listening.
+     */
+    initializeSocketServer(httpServer);
 
     if (isShuttingDown) {
       return;
@@ -128,14 +194,25 @@ const startServer = async () => {
 
     await new Promise((resolve, reject) => {
       const onListeningError = (error) => {
-        httpServer.off("error", onListeningError);
+        httpServer.off(
+          "error",
+          onListeningError
+        );
+
         reject(error);
       };
 
-      httpServer.once("error", onListeningError);
+      httpServer.once(
+        "error",
+        onListeningError
+      );
 
       httpServer.listen(env.PORT, () => {
-        httpServer.off("error", onListeningError);
+        httpServer.off(
+          "error",
+          onListeningError
+        );
+
         resolve();
       });
     });
@@ -154,6 +231,8 @@ const startServer = async () => {
     console.log(
       `Database: http://localhost:${env.PORT}/api/health/db`
     );
+    console.log("Socket.IO: Initialized");
+    console.log("Socket authentication: Pending");
     console.log("MongoDB: Connected");
     console.log("==================================");
   } catch (error) {
@@ -163,6 +242,41 @@ const startServer = async () => {
     );
 
     process.exitCode = 1;
+
+    /*
+     * Cleanup Socket.IO and HTTP before
+     * disconnecting MongoDB.
+     */
+    try {
+      await closeSocketServer();
+    } catch (socketError) {
+      console.error(
+        "Socket.IO cleanup failed:",
+        socketError.message
+      );
+    }
+
+    try {
+      if (httpServer.listening) {
+        await new Promise((resolve, reject) => {
+          httpServer.close((closeError) => {
+            if (
+              closeError &&
+              closeError.code !== "ERR_SERVER_NOT_RUNNING"
+            ) {
+              reject(closeError);
+            } else {
+              resolve();
+            }
+          });
+        });
+      }
+    } catch (httpError) {
+      console.error(
+        "HTTP cleanup failed:",
+        httpError.message
+      );
+    }
 
     try {
       await disconnectDB();

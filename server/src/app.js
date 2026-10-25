@@ -8,6 +8,7 @@ import authRoutes from "./routes/auth.routes.js";
 import creatorApplicationRoutes from "./routes/creatorApplication.routes.js";
 
 import adminCreatorApplicationRoutes from "./routes/adminCreatorApplication.routes.js";
+import conversationRoutes from "./routes/conversation.routes.js";
 
 import { env } from "./config/env.js";
 
@@ -184,6 +185,23 @@ app.use(
 app.use(
   `${env.API_PREFIX}/admin/creator-applications`,
   adminCreatorApplicationRoutes
+);
+
+/**
+ * ============================================================
+ * CONVERSATION AND MESSAGE ROUTES
+ * ============================================================
+ *
+ * POST /api/conversations
+ * GET  /api/conversations
+ * GET  /api/conversations/:conversationId
+ * GET  /api/conversations/:conversationId/messages
+ * POST /api/conversations/:conversationId/messages
+ */
+
+app.use(
+  `${env.API_PREFIX}/conversations`,
+  conversationRoutes
 );
 
 /*
