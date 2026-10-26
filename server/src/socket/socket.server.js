@@ -12,6 +12,9 @@ import {
 import {
   registerConversationSocketHandlers,
 } from "./conversation.socket.js";
+import {
+  registerMessageSocketHandlers,
+} from "./message.socket.js";
 
 /**
  * ============================================================
@@ -125,6 +128,11 @@ export const initializeSocketServer = (httpServer) => {
      * Register secure conversation room events.
      */
     registerConversationSocketHandlers(socket);
+
+    /**
+     * Register real-time messaging events.
+     */
+    registerMessageSocketHandlers(socket);
 
     /**
      * Clean up when disconnected.
