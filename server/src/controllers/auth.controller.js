@@ -9,6 +9,10 @@ import {
 } from "../utils/userResponse.js";
 
 import {
+  disconnectSocketsBySession,
+} from "../socket/socketRegistry.js";
+
+import {
   ACCESS_COOKIE_NAME,
   signAccessToken,
   verifyAccessToken,
@@ -147,21 +151,14 @@ export const getMe = (req, res) => {
 
 /**
  * ============================================================
- * LOGOUT
- * POST /api/auth/logout
+ * LOGOUT USER
  * ============================================================
  *
- * Security:
- *
- * 1. Read JWT from authentication cookie.
- * 2. Verify token signature and claims.
- * 3. Revoke the associated MongoDB session.
- * 4. Clear authentication cookie.
- *
- * Missing or invalid tokens are handled gracefully.
- *
- * If MongoDB revocation fails, do not falsely
- * report successful server-side logout.
+ * 1. Read authentication cookie.
+ * 2. Verify the access token.
+ * 3. Revoke the MongoDB session.
+ * 4. Disconnect sockets belonging to that session.
+ * 5. Clear the authentication cookie.
  */
 
 export const logout = async (req, res, next) => {
@@ -176,6 +173,7 @@ export const logout = async (req, res, next) => {
       let payload = null;
 
       /**
+       * STEP 1:
        * Verify the JWT before trusting its IDs.
        */
       try {
@@ -190,34 +188,63 @@ export const logout = async (req, res, next) => {
 
       if (payload) {
         /**
-         * Revoke the exact session belonging
+         * STEP 2:
+         * Revoke the exact MongoDB session belonging
          * to the authenticated user.
          */
         await revokeSession(
           payload.sid,
           payload.sub
         );
+
+        /**
+         * STEP 3:
+         * Disconnect all Socket.IO connections
+         * associated with the revoked session.
+         *
+         * This includes multiple browser tabs
+         * using the same login session.
+         */
+        disconnectSocketsBySession(
+          String(payload.sid),
+          {
+            code: "SESSION_REVOKED",
+
+            message:
+              "You have been logged out. Please sign in again.",
+          }
+        );
       }
     }
 
     /**
+     * STEP 4:
      * Clear the browser authentication cookie.
      */
     clearAccessCookie(res);
 
+    /**
+     * STEP 5:
+     * Return successful logout response.
+     */
     return res.status(200).json({
       success: true,
+
       message: "Logout successful.",
+
       requestId: req.requestId,
     });
   } catch (error) {
     /**
-     * If the database operation fails, clear the
-     * browser cookie but report the server error.
+     * If the database operation fails:
+     *
+     * - Clear the browser cookie.
+     * - Report the server error.
      *
      * The previously issued JWT may still be valid.
      */
     clearAccessCookie(res);
+
     next(error);
   }
 };

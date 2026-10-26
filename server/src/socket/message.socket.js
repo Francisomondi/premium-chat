@@ -296,7 +296,7 @@ export const registerMessageSocketHandlers = (
 
             if (created) {
             try {
-                broadcastNewMessage({
+                await broadcastNewMessage({
                 message,
                 created,
                 excludeSocketId: socket.id,

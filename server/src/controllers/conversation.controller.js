@@ -235,7 +235,7 @@ export const createMessage = async (
 
     if (created) {
       try {
-        broadcastNewMessage({
+        await broadcastNewMessage({
           message,
           created,
         });

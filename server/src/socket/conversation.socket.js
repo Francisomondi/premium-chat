@@ -1,6 +1,6 @@
 import {
-  verifyConversationMembership,
-} from "../services/conversation.service.js";
+  verifyConversationAccess,
+} from "../services/conversationAccess.service.js";
 
 import {
   requireValidSocketSession,
@@ -155,7 +155,14 @@ export const registerConversationSocketHandlers = (
          * Never trust the client to determine
          * which rooms it may access.
          */
-        await verifyConversationMembership({
+        /**
+         * Verify conversation access.
+         *
+         * Both participants must be active.
+         * The conversation must be ACTIVE.
+         */
+
+        await verifyConversationAccess({
           conversationId,
           userId: socket.data.userId,
           requireActive: true,

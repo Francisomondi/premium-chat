@@ -28,6 +28,10 @@ import {
   sendMessageSchema,
 } from "../validators/conversation.validators.js";
 
+import {
+  messageRateLimit,
+} from "../middleware/messageRateLimit.middleware.js";
+
 /**
  * ============================================================
  * PREMIUMCHAT CONVERSATION ROUTES
@@ -101,17 +105,31 @@ router.get(
 
 /**
  * ============================================================
- * SEND TEXT MESSAGE
+ * SEND MESSAGE
+ * POST /api/conversations/:conversationId/messages
  * ============================================================
+ *
+ * Middleware order:
+ *
+ * 1. Authentication (router.use(requireAuth))
+ * 2. CSRF / trusted-origin protection
+ * 3. Request validation
+ * 4. Message rate limiting
+ * 5. Message creation
  */
 
 router.post(
   "/:conversationId/messages",
+
   requireTrustedOrigin,
+
   validate({
     params: conversationParamsSchema,
     body: sendMessageSchema,
   }),
+
+  messageRateLimit,
+
   createMessage
 );
 

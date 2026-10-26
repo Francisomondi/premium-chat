@@ -16,6 +16,10 @@ import {
   verifyConversationMembership,
 } from "./conversation.service.js";
 
+import {
+  verifyConversationAccess,
+} from "./conversationAccess.service.js";
+
 /**
  * ============================================================
  * PREMIUMCHAT MESSAGE SERVICE
@@ -243,11 +247,11 @@ export const sendTextMessage = async ({
    */
 
   const conversation =
-    await verifyConversationMembership({
+   await verifyConversationAccess({
       conversationId,
       userId: senderId,
       requireActive: true,
-    });
+   });
 
   /**
    * STEP 3:
@@ -426,7 +430,7 @@ export const getConversationMessages = async ({
    * Verify conversation membership.
    */
 
-  await verifyConversationMembership({
+  await verifyConversationAccess({
     conversationId,
     userId,
     requireActive: false,

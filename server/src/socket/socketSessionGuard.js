@@ -8,7 +8,9 @@ import {
 import {
   getActiveSession,
 } from "../services/session.service.js";
-
+import {
+  disconnectSocket,
+} from "./socketRegistry.js";
 /**
  * ============================================================
  * PREMIUMCHAT SOCKET SESSION GUARD
@@ -83,24 +85,18 @@ export const validateSocketSession = async (socket) => {
 
 /**
  * ============================================================
- * DISCONNECT AN INVALID SOCKET
+ * DISCONNECT INVALID AUTHENTICATION SESSION
  * ============================================================
  */
 
 const disconnectInvalidSocket = (socket) => {
-  if (!socket.connected) {
-    return;
-  }
-
-  socket.emit("auth:session_expired", {
+  disconnectSocket(socket, {
     code: "SOCKET_SESSION_INVALID",
+
     message:
       "Your authentication session has expired or is no longer valid.",
   });
-
-  socket.disconnect(true);
 };
-
 /**
  * ============================================================
  * START SESSION MONITORING

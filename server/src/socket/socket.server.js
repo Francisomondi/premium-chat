@@ -12,9 +12,15 @@ import {
 import {
   registerConversationSocketHandlers,
 } from "./conversation.socket.js";
+
 import {
   registerMessageSocketHandlers,
 } from "./message.socket.js";
+
+import {
+  registerAuthenticatedSocket,
+  unregisterAuthenticatedSocket,
+} from "./socketRegistry.js";
 
 /**
  * ============================================================
@@ -113,6 +119,11 @@ export const initializeSocketServer = (httpServer) => {
 
     io.on("connection", (socket) => {
     const userId = socket.data.userId;
+
+    /**
+     * Track this authenticated connection.
+     */
+    registerAuthenticatedSocket(socket);
 
     console.log(
         `Authenticated socket connected: ${socket.id} (user: ${userId})`
