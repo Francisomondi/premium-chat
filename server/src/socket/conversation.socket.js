@@ -6,6 +6,9 @@ import {
   requireValidSocketSession,
 } from "./socketSessionGuard.js";
 
+import {
+  checkSocketRateLimit,
+} from "./socketRateLimiter.js";
 /**
  * ============================================================
  * PREMIUMCHAT CONVERSATION SOCKET HANDLERS
@@ -33,10 +36,18 @@ const OBJECT_ID_REGEX = /^[0-9a-fA-F]{24}$/;
 /**
  * Generate a private conversation room name.
  */
-export const getConversationRoom = (
-  conversationId
-) => {
-  return `conversation:${conversationId}`;
+/**
+ * Generate a consistent private conversation room name.
+ */
+export const getConversationRoom = (conversationId) => {
+  if (
+    typeof conversationId !== "string" ||
+    !/^[0-9a-fA-F]{24}$/.test(conversationId)
+  ) {
+    throw new TypeError("Invalid conversation ID.");
+  }
+
+  return `conversation:${conversationId.toLowerCase()}`;
 };
 
 /**
@@ -109,6 +120,32 @@ export const registerConversationSocketHandlers = (
             success: false,
             message: "Invalid conversation ID.",
             code: "INVALID_CONVERSATION_ID",
+          });
+        }
+
+        /**
+         * ==========================================================
+         * CONVERSATION JOIN RATE LIMITING
+         * ==========================================================
+         */
+
+        const rateLimit =
+          checkSocketRateLimit({
+            userId: socket.data.userId,
+            policyName: "CONVERSATION_JOIN",
+          });
+
+        if (!rateLimit.allowed) {
+          return reply({
+            success: false,
+
+            message:
+              "Too many conversation requests. Please try again shortly.",
+
+            code: "CONVERSATION_JOIN_RATE_LIMITED",
+
+            retryAfterMs:
+              rateLimit.retryAfterMs,
           });
         }
 

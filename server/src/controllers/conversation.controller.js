@@ -9,28 +9,9 @@ import {
   getConversationMessages,
 } from "../services/message.service.js";
 
-/**
- * ============================================================
- * PREMIUMCHAT CONVERSATION CONTROLLER
- * ============================================================
- *
- * Responsibilities:
- *
- * - Extract validated request data.
- * - Read authenticated identity.
- * - Call service functions.
- * - Return standardized JSON responses.
- *
- * Database and authorization logic remain
- * inside the service layer.
- */
-
-/**
- * ============================================================
- * CREATE OR GET CONVERSATION
- * POST /api/conversations
- * ============================================================
- */
+import {
+  broadcastNewMessage,
+} from "../socket/messageBroadcast.js";
 
 export const createConversation = async (
   req,
@@ -198,6 +179,13 @@ export const getMessages = async (
  * SEND TEXT MESSAGE
  * POST /api/conversations/:conversationId/messages
  * ============================================================
+ *
+ * Saves the message through the shared message service.
+ *
+ * Newly created messages are broadcast through Socket.IO.
+ *
+ * Duplicate retries return the existing message without
+ * broadcasting again.
  */
 
 export const createMessage = async (
@@ -217,26 +205,65 @@ export const createMessage = async (
       content,
     } = req.validated.body;
 
-    const result =
-      await sendTextMessage({
-        conversationId,
-        senderId,
-        clientMessageId,
-        content,
-      });
+    /**
+     * STEP 1:
+     * Save the message.
+     */
+
+    const result = await sendTextMessage({
+      conversationId,
+      senderId,
+      clientMessageId,
+      content,
+    });
+
+    const {
+      message,
+      created,
+    } = result;
+
+    /**
+     * STEP 2:
+     * Broadcast newly created messages.
+     *
+     * Socket.IO delivery is best-effort.
+     *
+     * If broadcasting fails after the database
+     * save, we must not incorrectly report that
+     * the message itself failed.
+     */
+
+    if (created) {
+      try {
+        broadcastNewMessage({
+          message,
+          created,
+        });
+      } catch (broadcastError) {
+        console.error(
+          "REST message broadcast failed:",
+          broadcastError.message
+        );
+      }
+    }
+
+    /**
+     * STEP 3:
+     * Return the saved message.
+     */
 
     return res.status(
-      result.created ? 201 : 200
+      created ? 201 : 200
     ).json({
       success: true,
 
-      message: result.created
+      message: created
         ? "Message sent successfully."
         : "Existing message retrieved.",
 
       data: {
-        message: result.message,
-        created: result.created,
+        message,
+        created,
       },
 
       requestId: req.requestId,

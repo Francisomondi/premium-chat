@@ -7,38 +7,14 @@ import {
 } from "./socketSessionGuard.js";
 
 import {
-  getConversationRoom,
-} from "./conversation.socket.js";
+  broadcastNewMessage,
+  formatMessageForSocket,
+} from "./messageBroadcast.js";
 
-/**
- * ============================================================
- * PREMIUMCHAT REAL-TIME MESSAGE HANDLERS
- * ============================================================
- *
- * Events:
- *
- * Client -> Server:
- *   message:send
- *
- * Server -> Client:
- *   message:new
- *   message:sent
- *
- * Security:
- *
- * - Socket authentication is required.
- * - Session validity is checked before sending.
- * - Conversation membership is enforced by
- *   the message service.
- * - Sender identity comes from socket.data.
- * - Only text messages are currently supported.
- *
- * Reliability:
- *
- * - MongoDB stores messages permanently.
- * - clientMessageId prevents duplicate records.
- * - Acknowledgments confirm processing.
- */
+import {
+  checkMultipleSocketRateLimits,
+} from "./socketRateLimiter.js";
+
 
 const OBJECT_ID_REGEX = /^[0-9a-fA-F]{24}$/;
 
@@ -230,6 +206,44 @@ export const registerMessageSocketHandlers = (
         } = validation.data;
 
         /**
+         * ==========================================================
+         * MESSAGE RATE LIMITING
+         * ==========================================================
+         *
+         * Apply both:
+         *
+         * - Sustained message limit
+         * - Short burst limit
+         *
+         * Limits are shared by all sockets belonging
+         * to the same authenticated user.
+         */
+
+        const rateLimit =
+        checkMultipleSocketRateLimits({
+            userId: socket.data.userId,
+
+            policyNames: [
+            "MESSAGE",
+            "MESSAGE_BURST",
+            ],
+        });
+
+        if (!rateLimit.allowed) {
+        return reply({
+            success: false,
+
+            message:
+            "You are sending messages too quickly. Please wait before trying again.",
+
+            code: "MESSAGE_RATE_LIMITED",
+
+            retryAfterMs:
+            rateLimit.retryAfterMs,
+        });
+        }
+
+        /**
          * STEP 3:
          * Sender identity comes from the
          * authenticated socket.
@@ -270,53 +284,30 @@ export const registerMessageSocketHandlers = (
          * Never include private account data.
          */
 
-        const messagePayload = {
-          _id: message._id.toString(),
-
-          conversationId:
-            message.conversationId.toString(),
-
-          senderId:
-            message.senderId.toString(),
-
-          clientMessageId:
-            message.clientMessageId,
-
-          type: message.type,
-
-          content: message.content,
-
-          status: message.status,
-
-          createdAt: message.createdAt,
-
-          updatedAt: message.updatedAt,
-        };
+        const messagePayload =
+        formatMessageForSocket(message);
 
         /**
-         * STEP 6:
-         * Broadcast new messages.
+         * Broadcast to other sockets joined to
+         * this conversation.
          *
-         * Only newly created messages trigger
-         * a room broadcast.
-         *
-         * Duplicate retries return the existing
-         * message without broadcasting again.
+         * The originating socket receives message:sent.
          */
 
-        if (created) {
-          const room = getConversationRoom(
-            conversationId
-          );
-
-          socket.to(room).emit(
-            "message:new",
-            {
-              conversationId,
-              message: messagePayload,
+            if (created) {
+            try {
+                broadcastNewMessage({
+                message,
+                created,
+                excludeSocketId: socket.id,
+                });
+            } catch (broadcastError) {
+                console.error(
+                "Socket message broadcast failed:",
+                broadcastError.message
+                );
             }
-          );
-        }
+            }
 
         /**
          * STEP 7:
