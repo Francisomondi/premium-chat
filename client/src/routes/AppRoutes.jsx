@@ -1,4 +1,3 @@
-
 import {
   Routes,
   Route,
@@ -13,12 +12,21 @@ import ExplorePage from "../pages/public/ExplorePage.jsx";
 import LoginPage from "../pages/public/LoginPage.jsx";
 import RegisterPage from "../pages/public/RegisterPage.jsx";
 import NotFoundPage from "../pages/public/NotFoundPage.jsx";
+import CreatorProfilePage from "../pages/public/CreatorProfilePage.jsx";
 
 import DevStatusPage from "../pages/public/DevStatusPage.jsx";
 
 import UserDashboard from "../pages/user/UserDashboard.jsx";
 import CreatorDashboard from "../pages/creator/CreatorDashboard.jsx";
 import AdminDashboard from "../pages/admin/AdminDashboard.jsx";
+
+/**
+ * ============================================================
+ * STEP 3.5.8 — CHAT PAGE
+ * ============================================================
+ */
+
+import ChatPage from "../pages/ChatPage.jsx";
 
 /**
  * ============================================================
@@ -31,9 +39,14 @@ import AdminDashboard from "../pages/admin/AdminDashboard.jsx";
  * - Login
  * - Register
  *
- * Protected routes:
+ * Authenticated routes:
  * - User dashboard
+ * - Messages
+ *
+ * Creator routes:
  * - Creator dashboard
+ *
+ * Admin routes:
  * - Admin dashboard
  *
  * Authentication and role checks are handled by
@@ -67,6 +80,11 @@ export default function AppRoutes() {
           path="/register"
           element={<RegisterPage />}
         />
+        
+        <Route
+          path="/creators/:creatorId"
+          element={<CreatorProfilePage />}
+        />
 
         {/* ============================================= */}
         {/* DEVELOPMENT DIAGNOSTICS                       */}
@@ -87,6 +105,15 @@ export default function AppRoutes() {
           <Route
             path="/dashboard"
             element={<UserDashboard />}
+          />
+
+          {/* =========================================== */}
+          {/* PRIVATE MESSAGING                           */}
+          {/* =========================================== */}
+
+          <Route
+            path="/messages"
+            element={<ChatPage />}
           />
         </Route>
 

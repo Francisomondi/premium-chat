@@ -35,6 +35,7 @@ import {
 
 import healthRoutes from "./routes/health.routes.js";
 import securityTestRoutes from "./routes/securityTest.routes.js";
+import creatorDiscoveryRoutes from "./routes/creatorDiscovery.routes.js";
 
 const app = express();
 
@@ -162,46 +163,23 @@ app.use(
   creatorApplicationRoutes
 );
 
-/*
- * ============================================================
- * ADMIN CREATOR APPLICATION ROUTES
- * ============================================================
- *
- * GET   /api/admin/creator-applications
- * PATCH /api/admin/creator-applications/:userId/review
- *
- * The router enforces:
- *
- * - requireAuth
- * - requireAdmin
- * - Trusted origin for review requests
- * - Request validation
- * - Review rate limiting
- *
- * Approval and rejection are handled by the
- * admin creator application service.
- */
+
 
 app.use(
   `${env.API_PREFIX}/admin/creator-applications`,
   adminCreatorApplicationRoutes
 );
 
-/**
- * ============================================================
- * CONVERSATION AND MESSAGE ROUTES
- * ============================================================
- *
- * POST /api/conversations
- * GET  /api/conversations
- * GET  /api/conversations/:conversationId
- * GET  /api/conversations/:conversationId/messages
- * POST /api/conversations/:conversationId/messages
- */
+
 
 app.use(
   `${env.API_PREFIX}/conversations`,
   conversationRoutes
+);
+
+app.use(
+  "/api/creators",
+  creatorDiscoveryRoutes
 );
 
 /*
