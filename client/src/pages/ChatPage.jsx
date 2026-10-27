@@ -4,18 +4,22 @@ import {
   useState,
 } from "react";
 
+import {
+  ArrowLeft,
+  Loader2,
+  LockKeyhole,
+  MessageCircle,
+  RefreshCw,
+  WifiOff,
+} from "lucide-react";
+
 import { useChatStore } from "../store/useChatStore.js";
-
 import { useChatSocketStore } from "../store/useChatSocketStore.js";
-
 import { useAuthStore } from "../store/useAuthStore.js";
 
 import ConversationSidebar from "../components/chat/ConversationSidebar.jsx";
-
 import ChatHeader from "../components/chat/ChatHeader.jsx";
-
 import MessageList from "../components/chat/MessageList.jsx";
-
 import MessageComposer from "../components/chat/MessageComposer.jsx";
 
 import {
@@ -24,66 +28,24 @@ import {
 
 /**
  * ============================================================
- * PREMIUMCHAT — COMPLETE CHAT PAGE
+ * PREMIUMCHAT — CHAT PAGE
  * ============================================================
  *
- * Combines:
- *
- * - Conversation Sidebar
- * - Chat Header
- * - Message List
- * - Message Composer
+ * UI CLEANUP 1.10
  *
  * Features:
- *
- * - Desktop two-column layout
- * - Mobile conversation navigation
+ * - Responsive desktop/mobile layout
+ * - Conversation sidebar
+ * - Active chat header
+ * - Message history
+ * - Message composer
  * - Socket.IO lifecycle management
- * - Active conversation management
  * - Connection status
- * - Loading and error states
+ * - Loading/error states
+ * - Session expiration handling
  *
- * IMPORTANT:
- *
- * Authentication is managed by the existing
- * useAuthStore and route protection.
- *
- * This page does not independently authenticate
- * users or create sessions.
+ * Existing Zustand stores and chat APIs are preserved.
  */
-
-/**
- * ============================================================
- * EMPTY CHAT ICON
- * ============================================================
- */
-
-function EmptyChatIcon() {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-      className="h-12 w-12"
-    >
-      <path
-        d={[
-          "M20 11.5a7.5 7.5 0 0 1-7.5 7.5",
-          "H6l-3 2v-6.5A7.5 7.5 0 1 1",
-          "20 11.5Z",
-        ].join(" ")}
-      />
-
-      <path d="M8 11h8" />
-
-      <path d="M8 14h5" />
-    </svg>
-  );
-}
 
 /**
  * ============================================================
@@ -96,39 +58,37 @@ function ConnectionStatus({
   isConnecting,
   connectionError,
 }) {
-  let label = "Offline";
+  let label = "Live chat offline";
 
-  let indicatorClass = "bg-slate-500";
+  let indicatorClass = "bg-zinc-500";
 
   if (isConnected) {
     label = "Live chat connected";
-
     indicatorClass = "bg-emerald-400";
   } else if (isConnecting) {
     label = "Connecting to live chat";
-
-    indicatorClass =
-      "bg-amber-400 animate-pulse";
+    indicatorClass = "animate-pulse bg-[#ffcc42]";
   } else if (connectionError) {
     label = "Live connection unavailable";
+    indicatorClass = "bg-rose-400";
   }
 
   return (
     <div
       role="status"
-      className={[
-        "flex items-center gap-2",
-        "text-[11px] text-slate-400",
-      ].join(" ")}
+      className="flex min-w-0 items-center gap-2 text-[10px] text-zinc-500 sm:text-[11px]"
     >
       <span
+        aria-hidden="true"
         className={[
-          "h-2 w-2 rounded-full",
+          "h-1.5 w-1.5 shrink-0 rounded-full",
           indicatorClass,
         ].join(" ")}
       />
 
-      <span>{label}</span>
+      <span className="truncate">
+        {label}
+      </span>
     </div>
   );
 }
@@ -145,23 +105,10 @@ function NoConversationSelected({
   connectionError,
 }) {
   return (
-    <div
-      className={[
-        "flex h-full min-h-0",
-        "flex-col",
-        "bg-[#0b0b14]",
-      ].join(" ")}
-    >
+    <div className="flex h-full min-h-0 flex-col bg-[#09090c]">
       {/* CONNECTION BAR */}
 
-      <div
-        className={[
-          "flex min-h-14 items-center",
-          "justify-end",
-          "border-b border-white/10",
-          "px-6",
-        ].join(" ")}
-      >
+      <div className="flex min-h-10 shrink-0 items-center justify-end border-b border-white/5 bg-[#111115] px-5">
         <ConnectionStatus
           isConnected={isConnected}
           isConnecting={isConnecting}
@@ -171,62 +118,35 @@ function NoConversationSelected({
 
       {/* EMPTY CONTENT */}
 
-      <div
-        className={[
-          "flex flex-1 flex-col",
-          "items-center justify-center",
-          "px-6 py-12",
-          "text-center",
-        ].join(" ")}
-      >
-        <div
-          className={[
-            "flex h-24 w-24",
-            "items-center justify-center",
-            "rounded-[28px]",
-            "border border-violet-500/20",
-            "bg-violet-500/10",
-            "text-violet-300",
-          ].join(" ")}
-        >
-          <EmptyChatIcon />
+      <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-5 py-8 text-center">
+        <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-[#ffcc42]/20 bg-[#ffcc42]/10 text-[#ffcc42]">
+          <MessageCircle
+            size={30}
+            strokeWidth={1.5}
+          />
         </div>
 
-        <h2
-          className={[
-            "mt-7 text-2xl",
-            "font-bold tracking-tight",
-            "text-white",
-          ].join(" ")}
-        >
-          Your conversations
+        <h2 className="mt-5 text-xl font-bold tracking-tight text-white">
+          Your Conversations
         </h2>
 
-        <p
-          className={[
-            "mt-3 max-w-sm",
-            "text-sm leading-7",
-            "text-slate-400",
-          ].join(" ")}
-        >
-          Select a conversation from the
-          sidebar to start messaging.
-
-          Your private conversations
-          with creators and users
-          will appear here.
+        <p className="mt-3 max-w-sm text-[13px] leading-6 text-zinc-400">
+          Select a conversation from the sidebar
+          to start messaging.
         </p>
 
-        <div
-          className={[
-            "mt-7 rounded-full",
-            "border border-white/10",
-            "bg-white/5",
-            "px-4 py-2",
-            "text-xs text-slate-400",
-          ].join(" ")}
-        >
-          🔒 Private messaging
+        <p className="mt-1 max-w-sm text-[12px] leading-5 text-zinc-500">
+          Your private conversations with creators
+          and other users will appear here.
+        </p>
+
+        <div className="mt-6 inline-flex items-center gap-2 rounded-full border border-[#ffcc42]/15 bg-[#ffcc42]/5 px-3 py-1.5 text-[11px] text-zinc-400">
+          <LockKeyhole
+            size={13}
+            className="text-[#ffcc42]"
+          />
+
+          <span>Private Messaging</span>
         </div>
       </div>
     </div>
@@ -247,42 +167,22 @@ function ActiveChatPanel({
   isConnecting,
   connectionError,
 }) {
-  /**
-   * Use the selected conversation's status
-   * to determine whether sending is allowed.
-   */
-
   const conversationStatus =
     conversation?.status ?? "ACTIVE";
 
   return (
-    <div
-      className={[
-        "flex h-full min-h-0",
-        "flex-col",
-        "bg-[#0b0b14]",
-      ].join(" ")}
-    >
+    <div className="flex h-full min-h-0 flex-col bg-[#09090c]">
       {/* CHAT HEADER */}
 
       <ChatHeader
         conversation={conversation}
         onBack={onBack}
-        showBackButton
+        showBackButton={true}
       />
 
       {/* CONNECTION STATUS */}
 
-      <div
-        className={[
-          "flex min-h-9 items-center",
-          "justify-end",
-          "border-b border-white/5",
-          "bg-[#0e0e19]",
-          "px-4",
-          "sm:px-6",
-        ].join(" ")}
-      >
+      <div className="flex min-h-8 shrink-0 items-center justify-end border-b border-white/5 bg-[#111115] px-3 sm:px-5">
         <ConnectionStatus
           isConnected={isConnected}
           isConnecting={isConnecting}
@@ -293,6 +193,7 @@ function ActiveChatPanel({
       {/* MESSAGE HISTORY */}
 
       <MessageList
+        key={conversationId}
         conversationId={conversationId}
       />
 
@@ -300,9 +201,7 @@ function ActiveChatPanel({
 
       <MessageComposer
         conversationId={conversationId}
-        conversationStatus={
-          conversationStatus
-        }
+        conversationStatus={conversationStatus}
       />
     </div>
   );
@@ -316,18 +215,18 @@ function ActiveChatPanel({
 
 export default function ChatPage() {
   /**
-   * ========================================================
+   * ==========================================================
    * LOCAL UI STATE
-   * ========================================================
+   * ==========================================================
    */
 
   const [showMobileChat, setShowMobileChat] =
     useState(false);
 
   /**
-   * ========================================================
+   * ==========================================================
    * AUTH STATE
-   * ========================================================
+   * ==========================================================
    */
 
   const isAuthenticated = useAuthStore(
@@ -344,123 +243,89 @@ export default function ChatPage() {
     null;
 
   /**
-   * ========================================================
+   * ==========================================================
    * CHAT STATE
-   * ========================================================
+   * ==========================================================
    */
 
   const conversations = useChatStore(
     (state) => state.conversations
   );
 
-  const activeConversationId =
-    useChatStore(
-      (state) =>
-        state.activeConversationId
-    );
+  const activeConversationId = useChatStore(
+    (state) => state.activeConversationId
+  );
 
-  const activeConversation =
-    useChatStore(
-      (state) =>
-        state.activeConversation
-    );
+  const activeConversation = useChatStore(
+    (state) => state.activeConversation
+  );
 
-  const isLoadingConversation =
-    useChatStore(
-      (state) =>
-        state.isLoadingConversation
-    );
+  const isLoadingConversation = useChatStore(
+    (state) => state.isLoadingConversation
+  );
 
-  const conversationError =
-    useChatStore(
-      (state) =>
-        state.conversationError
-    );
+  const conversationError = useChatStore(
+    (state) => state.conversationError
+  );
 
   /**
-   * ========================================================
+   * ==========================================================
    * CHAT ACTIONS
-   * ========================================================
+   * ==========================================================
    */
 
-  const initializeRealtime =
-    useChatStore(
-      (state) =>
-        state.initializeRealtime
-    );
+  const initializeRealtime = useChatStore(
+    (state) => state.initializeRealtime
+  );
 
-  const cleanupRealtime =
-    useChatStore(
-      (state) =>
-        state.cleanupRealtime
-    );
+  const cleanupRealtime = useChatStore(
+    (state) => state.cleanupRealtime
+  );
 
-  const clearActiveConversation =
-    useChatStore(
-      (state) =>
-        state.clearActiveConversation
-    );
-
-  const selectConversation =
-    useChatStore(
-      (state) =>
-        state.selectConversation
-    );
+  const selectConversation = useChatStore(
+    (state) => state.selectConversation
+  );
 
   /**
-   * ========================================================
+   * ==========================================================
    * SOCKET STATE
-   * ========================================================
+   * ==========================================================
    */
 
-  const isConnected =
-    useChatSocketStore(
-      (state) => state.isConnected
-    );
+  const isConnected = useChatSocketStore(
+    (state) => state.isConnected
+  );
 
-  const isConnecting =
-    useChatSocketStore(
-      (state) => state.isConnecting
-    );
+  const isConnecting = useChatSocketStore(
+    (state) => state.isConnecting
+  );
 
-  const connectionError =
-    useChatSocketStore(
-      (state) =>
-        state.connectionError
-    );
+  const connectionError = useChatSocketStore(
+    (state) => state.connectionError
+  );
 
-  const sessionExpired =
-    useChatSocketStore(
-      (state) =>
-        state.sessionExpired
-    );
+  const sessionExpired = useChatSocketStore(
+    (state) => state.sessionExpired
+  );
 
   /**
-   * ========================================================
+   * ==========================================================
    * SOCKET ACTIONS
-   * ========================================================
+   * ==========================================================
    */
 
-  const connectSocket =
-    useChatSocketStore(
-      (state) => state.connect
-    );
+  const connectSocket = useChatSocketStore(
+    (state) => state.connect
+  );
 
-  const disconnectSocket =
-    useChatSocketStore(
-      (state) => state.disconnect
-    );
+  const disconnectSocket = useChatSocketStore(
+    (state) => state.disconnect
+  );
 
   /**
-   * ========================================================
+   * ==========================================================
    * INITIALIZE REALTIME CHAT
-   * ========================================================
-   *
-   * The Socket.IO connection should only be
-   * started when the authenticated user
-   * opens the chat page.
-   *
-   * Cleanup occurs when leaving the page.
+   * ==========================================================
    */
 
   useEffect(() => {
@@ -472,12 +337,10 @@ export default function ChatPage() {
     }
 
     initializeRealtime();
-
     connectSocket();
 
     return () => {
       cleanupRealtime();
-
       disconnectSocket();
     };
   }, [
@@ -490,60 +353,46 @@ export default function ChatPage() {
   ]);
 
   /**
-   * ========================================================
-   * HANDLE CONVERSATION SELECTION
-   * ========================================================
+   * ==========================================================
+   * MOBILE NAVIGATION
+   * ==========================================================
    */
 
-  const handleConversationSelect =
-    useCallback(() => {
+  const handleConversationSelect = useCallback(
+    () => {
       setShowMobileChat(true);
-    }, []);
+    },
+    []
+  );
 
-  /**
-   * ========================================================
-   * HANDLE MOBILE BACK
-   * ========================================================
-   */
-
-  const handleMobileBack =
-    useCallback(() => {
+  const handleMobileBack = useCallback(
+    () => {
       setShowMobileChat(false);
-    }, []);
+    },
+    []
+  );
 
   /**
-   * ========================================================
+   * ==========================================================
    * RESOLVE ACTIVE CONVERSATION
-   * ========================================================
-   *
-   * The store may have an active conversation
-   * ID before its details finish loading.
-   *
-   * Prefer activeConversation when available.
-   * Otherwise, find the conversation in the
-   * existing sidebar collection.
+   * ==========================================================
    */
 
   const resolvedConversation =
     activeConversation &&
-    getConversationId(
-      activeConversation
-    ) === activeConversationId
+    getConversationId(activeConversation) ===
+      activeConversationId
       ? activeConversation
       : conversations.find(
           (conversation) =>
-            getConversationId(
-              conversation
-            ) === activeConversationId
+            getConversationId(conversation) ===
+            activeConversationId
         ) ?? null;
 
   /**
-   * ========================================================
-   * OPTIONAL CONVERSATION RELOAD
-   * ========================================================
-   *
-   * If an active ID exists but the conversation
-   * cannot be resolved, the user can retry.
+   * ==========================================================
+   * RETRY CONVERSATION
+   * ==========================================================
    */
 
   const handleRetryConversation = () => {
@@ -557,31 +406,33 @@ export default function ChatPage() {
   };
 
   /**
-   * ========================================================
+   * ==========================================================
    * RENDER
-   * ========================================================
+   * ==========================================================
    */
 
   return (
     <main
       className={[
-        "flex h-[calc(100dvh-80px)]",
+        "flex",
+        "h-[calc(100dvh-80px)]",
         "min-h-[400px]",
         "w-full overflow-hidden",
-        "bg-[#090911]",
+        "bg-[#09090c]",
         "text-white",
       ].join(" ")}
     >
-      {/* ====================================================
-          CONVERSATION SIDEBAR
-         ==================================================== */}
+      {/* ================================================= */}
+      {/* CONVERSATION SIDEBAR                              */}
+      {/* ================================================= */}
 
       <div
         className={[
           "h-full min-h-0",
           "w-full shrink-0",
-          "md:w-[340px]",
-          "lg:w-[380px]",
+          "border-r border-white/10",
+          "md:w-[320px]",
+          "lg:w-[360px]",
 
           showMobileChat
             ? "hidden md:block"
@@ -595,53 +446,48 @@ export default function ChatPage() {
         />
       </div>
 
-      {/* ====================================================
-          MAIN CHAT AREA
-         ==================================================== */}
+      {/* ================================================= */}
+      {/* MAIN CHAT AREA                                   */}
+      {/* ================================================= */}
 
       <div
         className={[
-          "min-w-0 flex-1",
           "h-full min-h-0",
+          "min-w-0 flex-1",
+          "flex-col",
 
           showMobileChat
             ? "flex"
             : "hidden md:flex",
-
-          "flex-col",
         ].join(" ")}
       >
-        {/* SESSION EXPIRED */}
+        {/* =============================================== */}
+        {/* SESSION EXPIRED                                 */}
+        {/* =============================================== */}
 
         {sessionExpired ? (
-          <div
-            className={[
-              "flex h-full",
-              "flex-col items-center",
-              "justify-center",
-              "px-6 text-center",
-            ].join(" ")}
-          >
-            <h2
-              className={[
-                "text-lg font-semibold",
-                "text-white",
-              ].join(" ")}
-            >
-              Session expired
+          <div className="flex h-full flex-col items-center justify-center px-6 text-center">
+            <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-rose-500/20 bg-rose-500/10 text-rose-400">
+              <WifiOff size={25} />
+            </div>
+
+            <h2 className="mt-4 text-lg font-semibold text-white">
+              Session Expired
             </h2>
 
-            <p
-              className={[
-                "mt-3 max-w-sm",
-                "text-sm leading-6",
-                "text-slate-400",
-              ].join(" ")}
-            >
-              Your chat session is no longer
-              valid. Please sign in again
-              to continue messaging.
+            <p className="mt-2 max-w-sm text-[13px] leading-6 text-zinc-400">
+              Your chat session is no longer valid.
+              Please sign in again to continue messaging.
             </p>
+
+            <button
+              type="button"
+              onClick={handleMobileBack}
+              className="mt-5 inline-flex items-center gap-2 text-[12px] text-[#ffcc42] md:hidden"
+            >
+              <ArrowLeft size={15} />
+              Back to conversations
+            </button>
           </div>
         ) : !activeConversationId ? (
           <NoConversationSelected
@@ -651,74 +497,53 @@ export default function ChatPage() {
           />
         ) : isLoadingConversation &&
           !resolvedConversation ? (
-          <div
-            className={[
-              "flex h-full items-center",
-              "justify-center",
-              "text-sm text-slate-400",
-            ].join(" ")}
-          >
-            Loading conversation...
+          <div className="flex h-full flex-col items-center justify-center gap-3 text-zinc-400">
+            <Loader2
+              size={23}
+              className="animate-spin text-[#ffcc42]"
+            />
+
+            <p className="text-[12px]">
+              Loading conversation...
+            </p>
           </div>
         ) : conversationError &&
           !resolvedConversation ? (
-          <div
-            className={[
-              "flex h-full flex-col",
-              "items-center justify-center",
-              "gap-4 px-6 text-center",
-            ].join(" ")}
-          >
-            <p className="text-sm text-rose-300">
+          <div className="flex h-full flex-col items-center justify-center gap-4 px-6 text-center">
+            <div className="flex h-12 w-12 items-center justify-center rounded-xl border border-rose-500/20 bg-rose-500/10 text-rose-400">
+              <WifiOff size={22} />
+            </div>
+
+            <p className="max-w-sm text-[13px] leading-6 text-rose-300">
               {conversationError}
             </p>
 
             <button
               type="button"
               onClick={handleRetryConversation}
-              className={[
-                "rounded-xl",
-                "bg-violet-600",
-                "px-4 py-2",
-                "text-sm font-medium",
-                "text-white",
-                "hover:bg-violet-500",
-              ].join(" ")}
+              className="inline-flex items-center gap-2 rounded-lg bg-[#ffcc42] px-4 py-2 text-[12px] font-semibold text-black transition hover:brightness-110"
             >
-              Try again
+              <RefreshCw size={14} />
+              Try Again
             </button>
 
             <button
               type="button"
               onClick={handleMobileBack}
-              className={[
-                "text-xs text-slate-400",
-                "md:hidden",
-              ].join(" ")}
+              className="inline-flex items-center gap-2 text-[12px] text-zinc-400 md:hidden"
             >
+              <ArrowLeft size={14} />
               Back to conversations
             </button>
           </div>
         ) : resolvedConversation ? (
           <ActiveChatPanel
-            conversation={
-              resolvedConversation
-            }
-            conversationId={
-              activeConversationId
-            }
-            onBack={
-              handleMobileBack
-            }
-            isConnected={
-              isConnected
-            }
-            isConnecting={
-              isConnecting
-            }
-            connectionError={
-              connectionError
-            }
+            conversation={resolvedConversation}
+            conversationId={activeConversationId}
+            onBack={handleMobileBack}
+            isConnected={isConnected}
+            isConnecting={isConnecting}
+            connectionError={connectionError}
           />
         ) : (
           <NoConversationSelected

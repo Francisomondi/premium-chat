@@ -4,6 +4,7 @@ import { useState } from "react";
 import {
   Link,
   Navigate,
+  useLocation,
   useNavigate,
 } from "react-router-dom";
 
@@ -18,9 +19,9 @@ import {
 
 import Card from "../../components/ui/Card.jsx";
 import Alert from "../../components/ui/Alert.jsx";
-
 import { useAuthStore } from "../../store/useAuthStore.js";
 import { useUIStore } from "../../store/useUIStore.js";
+import { validateAuthRedirect} from "../../utils/authRedirect.js";
 
 /**
  * ============================================================
@@ -41,6 +42,20 @@ const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function RegisterPage() {
   const navigate = useNavigate();
+  
+    /**
+   * ==========================================================
+   * STEP 4.2.5.6 — REGISTRATION REDIRECT CONTINUITY
+   * ==========================================================
+   */
+
+  const location = useLocation();
+
+  const requestedPath = location.state?.from;
+
+  const safeReturnPath =
+    validateAuthRedirect(requestedPath);
+
   const showNotification = useUIStore(
     (state) => state.showNotification
   );
@@ -163,6 +178,9 @@ export default function RegisterPage() {
         replace: true,
         state: {
           registrationSuccess: true,
+          ...(safeReturnPath
+            ? { from: safeReturnPath }
+            : {}),
         },
       });
     } catch {
@@ -193,7 +211,17 @@ export default function RegisterPage() {
   }
 
   if (isAuthenticated) {
-    return <Navigate to="/dashboard" replace />;
+    return (
+      <Navigate
+        to="/login"
+        state={
+          safeReturnPath
+            ? { from: safeReturnPath }
+            : undefined
+        }
+        replace
+      />
+    );
   }
 
   const busy = isLoading || submitting;
@@ -463,6 +491,11 @@ export default function RegisterPage() {
           Already have an account?{" "}
           <Link
             to="/login"
+            state={
+              safeReturnPath
+                ? { from: safeReturnPath }
+                : undefined
+            }
             className="font-semibold text-accent hover:underline"
           >
             Sign in

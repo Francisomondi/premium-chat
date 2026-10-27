@@ -6,8 +6,22 @@ import { normalizeApiError } from "./apiError.js";
 
 /**
  * ============================================================
- * PREMIUMCHAT AXIOS INSTANCE
+ * PREMIUMCHAT — AXIOS INSTANCE
  * ============================================================
+ *
+ * Features:
+ *
+ * - Centralized API configuration
+ * - HTTP-only cookie authentication
+ * - Request timeout
+ * - Normalized API errors
+ * - Development request logging
+ * - Expected authentication error handling
+ *
+ * Security:
+ *
+ * Never store JWTs in localStorage,
+ * sessionStorage, or Zustand.
  */
 
 const axiosInstance = axios.create({
@@ -22,7 +36,7 @@ const axiosInstance = axios.create({
   },
 });
 
-/*
+/**
  * ============================================================
  * REQUEST INTERCEPTOR
  * ============================================================
@@ -30,11 +44,9 @@ const axiosInstance = axios.create({
 
 axiosInstance.interceptors.request.use(
   (config) => {
-    /*
-     * HTTP-only authentication cookies will be sent
-     * automatically when applicable.
-     *
-     * Do not read JWT tokens from localStorage here.
+    /**
+     * HTTP-only cookies are automatically
+     * attached by the browser when allowed.
      */
 
     if (import.meta.env.DEV) {
@@ -46,35 +58,74 @@ axiosInstance.interceptors.request.use(
     return config;
   },
 
-  (error) => {
-    return Promise.reject(error);
-  }
+  (error) => Promise.reject(error)
 );
 
-/*
+/**
  * ============================================================
  * RESPONSE INTERCEPTOR
  * ============================================================
  */
 
 axiosInstance.interceptors.response.use(
-  (response) => {
-    return response;
-  },
+  (response) => response,
 
   (error) => {
-    const normalized = normalizeApiError(error);
+    /**
+     * ========================================================
+     * NORMALIZE ERROR
+     * ========================================================
+     */
 
-    /*
-     * Preserve the original Axios error while attaching
-     * normalized details for the service layer.
+    const normalized =
+      normalizeApiError(error);
+
+    /**
+     * Preserve the original Axios error.
      */
 
     error.apiError = normalized;
 
+    /**
+     * ========================================================
+     * EXPECTED UNAUTHENTICATED SESSION CHECK
+     * ========================================================
+     *
+     * GET /auth/me may return 401 when the
+     * visitor is not logged in.
+     *
+     * Do not warn for this specific case.
+     *
+     * The original rejection still reaches
+     * the authentication store.
+     */
+
+    const requestUrl =
+      error.config?.url ?? "";
+
+    const requestMethod =
+      error.config?.method?.toUpperCase();
+
+    const isAuthMeRequest =
+      requestMethod === "GET" &&
+      /^\/auth\/me\/?(?:\?.*)?$/.test(requestUrl);
+
+    const isExpectedAuthError =
+      isAuthMeRequest &&
+      error.response?.status === 401 &&
+      error.response?.data?.code ===
+        "AUTH_REQUIRED";
+
+    /**
+     * ========================================================
+     * DEVELOPMENT LOGGING
+     * ========================================================
+     */
+
     if (
       import.meta.env.DEV &&
-      error.code !== "ERR_CANCELED"
+      error.code !== "ERR_CANCELED" &&
+      !isExpectedAuthError
     ) {
       console.warn("[API Error]", {
         status: normalized.status,
@@ -83,11 +134,15 @@ axiosInstance.interceptors.response.use(
       });
     }
 
-    /*
-     * Authentication refresh and redirect logic will be
-     * added in Module 2 after the auth API is implemented.
+    /**
+     * ========================================================
+     * RETURN ORIGINAL ERROR
+     * ========================================================
      *
-     * We deliberately do not redirect every 401 here.
+     * Do not redirect on every 401.
+     *
+     * The authentication store remains
+     * responsible for authentication state.
      */
 
     return Promise.reject(error);

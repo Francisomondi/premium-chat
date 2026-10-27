@@ -1,5 +1,12 @@
 import { useState } from "react";
 
+import {
+  ArrowLeft,
+  Archive,
+  Ban,
+  LockKeyhole,
+} from "lucide-react";
+
 import { useAuthStore } from "../../store/useAuthStore.js";
 
 import {
@@ -14,44 +21,27 @@ import {
  * PREMIUMCHAT — CHAT HEADER
  * ============================================================
  *
- * Displays:
+ * UI CLEANUP 1.7
  *
+ * Features:
+ *
+ * - Compact black-and-gold interface
  * - Participant avatar
+ * - Avatar fallback initials
  * - Participant name
  * - Conversation status
- * - Mobile back button
+ * - Mobile back navigation
+ * - Private conversation indicator
  *
- * Online presence will be added after
- * the presence system is implemented.
- */
-
-/**
- * ============================================================
- * BACK ICON
- * ============================================================
- */
-
-function BackIcon() {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-      className="h-5 w-5"
-    >
-      <path d="m15 18-6-6 6-6" />
-    </svg>
-  );
-}
-
-/**
- * ============================================================
- * CHAT HEADER
- * ============================================================
+ * Preserves:
+ *
+ * - Existing authentication store
+ * - Existing chat utility functions
+ * - Existing conversation statuses
+ * - Existing mobile navigation callback
+ *
+ * Online presence is intentionally not displayed
+ * until the presence system is implemented.
  */
 
 export default function ChatHeader({
@@ -59,8 +49,25 @@ export default function ChatHeader({
   onBack,
   showBackButton = false,
 }) {
-  const [avatarFailed, setAvatarFailed] =
-    useState(false);
+  /**
+   * ==========================================================
+   * LOCAL STATE
+   * ==========================================================
+   *
+   * Track the URL of a failed avatar.
+   *
+   * This allows a new avatar URL to load
+   * if the participant updates their profile.
+   */
+
+  const [failedAvatarUrl, setFailedAvatarUrl] =
+    useState(null);
+
+  /**
+   * ==========================================================
+   * AUTHENTICATED USER
+   * ==========================================================
+   */
 
   const currentUser = useAuthStore(
     (state) => state.user
@@ -71,11 +78,16 @@ export default function ChatHeader({
     currentUser?.id ??
     null;
 
-  const participant =
-    getOtherParticipant(
-      conversation,
-      currentUserId
-    );
+  /**
+   * ==========================================================
+   * PARTICIPANT DETAILS
+   * ==========================================================
+   */
+
+  const participant = getOtherParticipant(
+    conversation,
+    currentUserId
+  );
 
   const participantName =
     getParticipantName(participant);
@@ -84,126 +96,234 @@ export default function ChatHeader({
     getParticipantAvatar(participant);
 
   const initials =
-    getParticipantInitials(
-      participantName
-    );
+    getParticipantInitials(participantName);
+
+  /**
+   * ==========================================================
+   * AVATAR DISPLAY
+   * ==========================================================
+   */
+
+  const showAvatar =
+    Boolean(avatarUrl) &&
+    failedAvatarUrl !== avatarUrl;
+
+  /**
+   * ==========================================================
+   * CONVERSATION STATUS
+   * ==========================================================
+   */
 
   const status =
-    conversation?.status ??
-    "ACTIVE";
+    conversation?.status ?? "ACTIVE";
 
-  const statusLabel =
-    status === "BLOCKED"
-      ? "Conversation blocked"
-      : status === "ARCHIVED"
-        ? "Conversation archived"
-        : "Private conversation";
+  const isBlocked = status === "BLOCKED";
+
+  const isArchived = status === "ARCHIVED";
+
+  const statusLabel = isBlocked
+    ? "Conversation blocked"
+    : isArchived
+      ? "Conversation archived"
+      : "Private conversation";
+
+  /**
+   * ==========================================================
+   * STATUS STYLING
+   * ==========================================================
+   */
+
+  const statusTextClass = isBlocked
+    ? "text-rose-400"
+    : isArchived
+      ? "text-amber-400"
+      : "text-zinc-500";
+
+  const statusDotClass = isBlocked
+    ? "bg-rose-400"
+    : isArchived
+      ? "bg-amber-400"
+      : "bg-[#ffcc42]";
+
+  /**
+   * ==========================================================
+   * RENDER
+   * ==========================================================
+   */
 
   return (
     <header
       className={[
-        "flex min-h-20",
-        "items-center gap-3",
+        "flex min-h-[64px]",
+        "shrink-0 items-center",
+        "gap-3",
         "border-b border-white/10",
-        "bg-[#11111d]",
-        "px-4 py-3",
-        "sm:px-6",
+        "bg-[#111115]",
+        "px-3 py-2.5",
+        "sm:px-5",
       ].join(" ")}
     >
-      {/* MOBILE BACK BUTTON */}
+      {/* ================================================= */}
+      {/* MOBILE BACK BUTTON                                */}
+      {/* ================================================= */}
 
       {showBackButton && (
         <button
           type="button"
           onClick={onBack}
           aria-label="Back to conversations"
+          title="Back to conversations"
           className={[
-            "flex h-10 w-10",
+            "flex h-9 w-9",
             "shrink-0 items-center",
             "justify-center",
-            "rounded-xl",
-            "text-slate-300",
+            "rounded-lg",
+            "border border-transparent",
+            "text-zinc-400",
             "transition-colors",
-            "hover:bg-white/10",
-            "hover:text-white",
+            "hover:border-[#ffcc42]/20",
+            "hover:bg-[#ffcc42]/10",
+            "hover:text-[#ffcc42]",
+            "focus-visible:outline-none",
+            "focus-visible:ring-2",
+            "focus-visible:ring-[#ffcc42]/50",
+            "md:hidden",
           ].join(" ")}
         >
-          <BackIcon />
+          <ArrowLeft size={19} />
         </button>
       )}
 
-      {/* AVATAR */}
+      {/* ================================================= */}
+      {/* PARTICIPANT AVATAR                                */}
+      {/* ================================================= */}
 
       <div
         className={[
-          "flex h-11 w-11",
-          "shrink-0 items-center",
-          "justify-center",
-          "overflow-hidden rounded-2xl",
+          "relative flex",
+          "h-10 w-10",
+          "shrink-0",
+          "items-center justify-center",
+          "overflow-hidden",
+          "rounded-xl",
+          "border border-[#ffcc42]/15",
           "bg-gradient-to-br",
-          "from-violet-600",
-          "to-fuchsia-600",
-          "text-sm font-bold",
-          "text-white",
+          "from-[#3b3018]",
+          "via-[#29241b]",
+          "to-[#17171c]",
+          "text-[13px]",
+          "font-bold",
+          "text-[#ffcc42]",
         ].join(" ")}
       >
-        {avatarUrl && !avatarFailed ? (
+        {showAvatar ? (
           <img
             src={avatarUrl}
             alt=""
             className="h-full w-full object-cover"
-            onError={() =>
-              setAvatarFailed(true)
-            }
+            onError={() => {
+              setFailedAvatarUrl(avatarUrl);
+            }}
           />
         ) : (
-          <span>{initials}</span>
+          <span aria-hidden="true">
+            {initials}
+          </span>
         )}
       </div>
 
-      {/* PARTICIPANT DETAILS */}
+      {/* ================================================= */}
+      {/* PARTICIPANT INFORMATION                           */}
+      {/* ================================================= */}
 
       <div className="min-w-0 flex-1">
+        {/* PARTICIPANT NAME */}
+
         <h2
           className={[
-            "truncate text-sm",
-            "font-semibold text-white",
-            "sm:text-base",
+            "truncate",
+            "text-[13px]",
+            "font-semibold",
+            "leading-5",
+            "text-white",
+            "sm:text-sm",
           ].join(" ")}
+          title={participantName}
         >
           {participantName}
         </h2>
 
-        <p
-          className={[
-            "mt-1 text-xs",
-            status === "BLOCKED"
-              ? "text-rose-400"
-              : status === "ARCHIVED"
-                ? "text-amber-400"
-                : "text-slate-400",
-          ].join(" ")}
-        >
-          {statusLabel}
-        </p>
+        {/* CONVERSATION STATUS */}
+
+        <div className="mt-0.5 flex items-center gap-1.5">
+          <span
+            aria-hidden="true"
+            className={[
+              "h-1.5 w-1.5",
+              "shrink-0 rounded-full",
+              statusDotClass,
+            ].join(" ")}
+          />
+
+          <span
+            className={[
+              "truncate",
+              "text-[11px]",
+              "leading-4",
+              statusTextClass,
+            ].join(" ")}
+          >
+            {statusLabel}
+          </span>
+
+          {/* ARCHIVED ICON */}
+
+          {isArchived && (
+            <Archive
+              size={12}
+              className="shrink-0 text-amber-400"
+              aria-hidden="true"
+            />
+          )}
+
+          {/* BLOCKED ICON */}
+
+          {isBlocked && (
+            <Ban
+              size={12}
+              className="shrink-0 text-rose-400"
+              aria-hidden="true"
+            />
+          )}
+        </div>
       </div>
 
-      {/* PRIVATE CHAT BADGE */}
+      {/* ================================================= */}
+      {/* PRIVATE CHAT INDICATOR                            */}
+      {/* ================================================= */}
 
       <div
         className={[
-          "hidden items-center",
-          "gap-2 rounded-full",
-          "border border-white/10",
-          "bg-white/5",
+          "hidden shrink-0",
+          "items-center gap-2",
+          "rounded-full",
+          "border border-[#ffcc42]/15",
+          "bg-[#ffcc42]/5",
           "px-3 py-1.5",
-          "text-xs text-slate-400",
-          "sm:flex",
+          "text-[11px]",
+          "font-medium",
+          "text-zinc-400",
+          "sm:inline-flex",
         ].join(" ")}
+        title="Private conversation"
       >
-        <span>🔒</span>
+        <LockKeyhole
+          size={13}
+          className="text-[#ffcc42]"
+          aria-hidden="true"
+        />
 
-        <span>Private chat</span>
+        <span>Private Chat</span>
       </div>
     </header>
   );

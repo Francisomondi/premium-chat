@@ -3,6 +3,11 @@ import {
 } from "react";
 
 import {
+  Archive,
+  Ban,
+} from "lucide-react";
+
+import {
   formatConversationTime,
   getConversationActivityDate,
   getConversationId,
@@ -18,7 +23,29 @@ import {
  * PREMIUMCHAT — CONVERSATION ITEM
  * ============================================================
  *
+ * UI CLEANUP 1.6.4
+ *
  * Displays one conversation in the sidebar.
+ *
+ * Features:
+ *
+ * - Compact responsive layout
+ * - Participant avatar
+ * - Avatar fallback initials
+ * - Participant name
+ * - Last message preview
+ * - Conversation timestamp
+ * - Active conversation highlighting
+ * - Archived conversation badge
+ * - Blocked conversation badge
+ * - Keyboard accessibility
+ *
+ * Preserves:
+ *
+ * - Existing chat utility functions
+ * - Existing conversation data structure
+ * - Existing selection callback
+ * - Existing blocked conversation restrictions
  *
  * Props:
  *
@@ -36,8 +63,20 @@ export default function ConversationItem({
   onSelect,
   disabled = false,
 }) {
-  const [avatarFailed, setAvatarFailed] =
-    useState(false);
+  /**
+   * ==========================================================
+   * LOCAL STATE
+   * ==========================================================
+   */
+
+  const [failedAvatarUrl, setFailedAvatarUrl] =
+    useState(null);
+
+  /**
+   * ==========================================================
+   * CONVERSATION DETAILS
+   * ==========================================================
+   */
 
   const conversationId =
     getConversationId(conversation);
@@ -59,11 +98,23 @@ export default function ConversationItem({
       participantName
     );
 
+  /**
+   * ==========================================================
+   * MESSAGE PREVIEW
+   * ==========================================================
+   */
+
   const preview =
     getMessagePreview(
       conversation,
       currentUserId
     );
+
+  /**
+   * ==========================================================
+   * ACTIVITY TIMESTAMP
+   * ==========================================================
+   */
 
   const activityDate =
     getConversationActivityDate(
@@ -74,6 +125,12 @@ export default function ConversationItem({
     formatConversationTime(
       activityDate
     );
+
+  /**
+   * ==========================================================
+   * CONVERSATION STATUS
+   * ==========================================================
+   */
 
   const status =
     conversation?.status ??
@@ -90,6 +147,28 @@ export default function ConversationItem({
     !conversationId ||
     isBlocked;
 
+  /**
+   * ==========================================================
+   * AVATAR FALLBACK
+   * ==========================================================
+   *
+   * Track the URL that failed instead of a
+   * permanent boolean.
+   *
+   * If the participant uploads a new avatar,
+   * the updated URL can display normally.
+   */
+
+  const showAvatar =
+    Boolean(avatarUrl) &&
+    failedAvatarUrl !== avatarUrl;
+
+  /**
+   * ==========================================================
+   * SELECT CONVERSATION
+   * ==========================================================
+   */
+
   const handleSelect = () => {
     if (isDisabled) {
       return;
@@ -97,6 +176,29 @@ export default function ConversationItem({
 
     onSelect?.(conversationId);
   };
+
+  /**
+   * ==========================================================
+   * ACCESSIBLE LABEL
+   * ==========================================================
+   */
+
+  const accessibleLabel = [
+    `Conversation with ${participantName}`,
+    formattedTime
+      ? `Last activity ${formattedTime}`
+      : null,
+    isArchived ? "Archived" : null,
+    isBlocked ? "Blocked" : null,
+  ]
+    .filter(Boolean)
+    .join(". ");
+
+  /**
+   * ==========================================================
+   * RENDER
+   * ==========================================================
+   */
 
   return (
     <button
@@ -106,96 +208,167 @@ export default function ConversationItem({
       aria-current={
         isActive ? "true" : undefined
       }
+      aria-label={accessibleLabel}
       className={[
-        "group relative flex w-full",
-        "items-center gap-3 rounded-2xl",
-        "px-3 py-3 text-left",
+        /**
+         * BASE LAYOUT
+         */
+
+        "group relative flex",
+        "w-full min-w-0",
+        "min-h-[68px]",
+        "items-center gap-3",
+        "rounded-xl",
+        "border",
+        "px-3 py-2.5",
+        "text-left",
+
+        /**
+         * TRANSITIONS
+         */
+
         "transition-all duration-200",
+
+        /**
+         * KEYBOARD ACCESSIBILITY
+         */
 
         "focus-visible:outline-none",
         "focus-visible:ring-2",
-        "focus-visible:ring-violet-500",
+        "focus-visible:ring-[#ffcc42]/60",
+
+        /**
+         * ACTIVE CONVERSATION
+         */
 
         isActive
           ? [
-              "bg-violet-500/15",
-              "ring-1 ring-violet-500/30",
+              "border-[#ffcc42]/25",
+              "bg-[#ffcc42]/10",
+              "shadow-[inset_0_0_0_1px_rgba(255,204,66,0.05)]",
             ].join(" ")
           : [
+              "border-transparent",
+              "bg-transparent",
+              "hover:border-white/5",
               "hover:bg-white/5",
-              "border border-transparent",
             ].join(" "),
 
+        /**
+         * DISABLED STATE
+         */
+
         isDisabled
-          ? "cursor-not-allowed opacity-50"
+          ? [
+              "cursor-not-allowed",
+              "opacity-50",
+            ].join(" ")
           : "cursor-pointer",
       ].join(" ")}
     >
-      {/* ACTIVE INDICATOR */}
+      {/* ================================================= */}
+      {/* ACTIVE CONVERSATION INDICATOR                     */}
+      {/* ================================================= */}
 
       {isActive && (
         <span
+          aria-hidden="true"
           className={[
-            "absolute bottom-3 left-0 top-3",
-            "w-1 rounded-r-full",
-            "bg-violet-400",
+            "absolute left-0",
+            "top-3 bottom-3",
+            "w-[3px]",
+            "rounded-r-full",
+            "bg-[#ffcc42]",
           ].join(" ")}
         />
       )}
 
-      {/* AVATAR */}
+      {/* ================================================= */}
+      {/* PARTICIPANT AVATAR                                */}
+      {/* ================================================= */}
 
       <div
         className={[
-          "relative flex h-12 w-12",
-          "shrink-0 items-center",
-          "justify-center overflow-hidden",
-          "rounded-2xl",
+          "relative flex",
+          "h-[42px] w-[42px]",
+          "shrink-0",
+          "items-center justify-center",
+          "overflow-hidden",
+          "rounded-xl",
+
+          /**
+           * FALLBACK BACKGROUND
+           */
+
+          "border border-[#ffcc42]/15",
           "bg-gradient-to-br",
-          "from-violet-600",
-          "to-fuchsia-600",
-          "text-sm font-bold text-white",
+          "from-[#3b3018]",
+          "via-[#29241b]",
+          "to-[#17171c]",
+
+          /**
+           * FALLBACK TEXT
+           */
+
+          "text-[13px]",
+          "font-bold",
+          "text-[#ffcc42]",
         ].join(" ")}
       >
-        {avatarUrl && !avatarFailed ? (
+        {showAvatar ? (
           <img
             src={avatarUrl}
             alt=""
-            className="h-full w-full object-cover"
             loading="lazy"
-            onError={() =>
-              setAvatarFailed(true)
-            }
+            className="h-full w-full object-cover"
+            onError={() => {
+              setFailedAvatarUrl(avatarUrl);
+            }}
           />
         ) : (
-          <span>
+          <span aria-hidden="true">
             {initials}
           </span>
         )}
       </div>
 
-      {/* CONTENT */}
+      {/* ================================================= */}
+      {/* CONVERSATION CONTENT                              */}
+      {/* ================================================= */}
 
       <div className="min-w-0 flex-1">
-        <div className="flex items-center justify-between gap-2">
+        {/* NAME AND TIME */}
+
+        <div className="flex min-w-0 items-center justify-between gap-2">
           <h3
             className={[
-              "truncate text-sm font-semibold",
+              "min-w-0 flex-1",
+              "truncate",
+              "text-[12px]",
+              "font-semibold",
+              "leading-5",
+
               isActive
-                ? "text-white"
-                : "text-slate-200",
+                ? "text-[#ffcc42]"
+                : "text-zinc-100",
             ].join(" ")}
           >
             {participantName}
           </h3>
 
+          {/* TIMESTAMP */}
+
           {formattedTime && (
             <span
               className={[
-                "shrink-0 text-[11px]",
+                "shrink-0",
+                "whitespace-nowrap",
+                "text-[10px]",
+                "font-medium",
+
                 isActive
-                  ? "text-violet-300"
-                  : "text-slate-500",
+                  ? "text-[#ffcc42]/80"
+                  : "text-zinc-500",
               ].join(" ")}
             >
               {formattedTime}
@@ -203,44 +376,73 @@ export default function ConversationItem({
           )}
         </div>
 
-        <div className="mt-1 flex items-center gap-2">
+        {/* ================================================= */}
+        {/* MESSAGE PREVIEW AND STATUS                       */}
+        {/* ================================================= */}
+
+        <div className="mt-0.5 flex min-w-0 items-center gap-2">
+          {/* MESSAGE PREVIEW */}
+
           <p
             className={[
-              "min-w-0 flex-1 truncate",
-              "text-xs leading-5",
+              "min-w-0 flex-1",
+              "truncate",
+              "text-[11px]",
+              "leading-5",
+
               isActive
-                ? "text-violet-200/80"
-                : "text-slate-400",
+                ? "text-zinc-300"
+                : "text-zinc-500",
             ].join(" ")}
           >
             {preview}
           </p>
 
+          {/* ARCHIVED BADGE */}
+
           {isArchived && (
             <span
+              title="Archived conversation"
               className={[
-                "shrink-0 rounded-md",
+                "inline-flex",
+                "shrink-0",
+                "items-center gap-1",
+                "rounded-md",
+                "border border-amber-500/15",
                 "bg-amber-500/10",
                 "px-1.5 py-0.5",
-                "text-[10px]",
-                "font-medium text-amber-300",
+                "text-[9px]",
+                "font-semibold",
+                "text-amber-300",
               ].join(" ")}
             >
-              Archived
+              <Archive size={10} />
+
+              <span>Archived</span>
             </span>
           )}
 
+          {/* BLOCKED BADGE */}
+
           {isBlocked && (
             <span
+              title="Blocked conversation"
               className={[
-                "shrink-0 rounded-md",
-                "bg-rose-500/10",
+                "inline-flex",
+                "shrink-0",
+                "items-center gap-1",
+                "rounded-md",
+                "border border-red-500/15",
+                "bg-red-500/10",
                 "px-1.5 py-0.5",
-                "text-[10px]",
-                "font-medium text-rose-300",
+                "text-[9px]",
+                "font-semibold",
+                "text-red-300",
               ].join(" ")}
             >
-              Blocked
+              <Ban size={10} />
+
+              <span>Blocked</span>
             </span>
           )}
         </div>

@@ -48,7 +48,7 @@ import { useUIStore } from "../../store/useUIStore.js";
 
 const publicLinks = [
   {
-    label: "Explore ",
+    label: "Explore",
     path: "/explore",
   },
 
@@ -319,7 +319,7 @@ export default function Navbar() {
           }
           className={[
             "relative whitespace-nowrap",
-            "py-2 text-[13px] font-medium",
+            "py-2 text-[12px] font-medium",
             "transition-colors duration-200",
             isActive
               ? "text-[#ffcc42]"
@@ -343,7 +343,7 @@ export default function Navbar() {
         className={({ isActive }) =>
           [
             "relative whitespace-nowrap",
-            "py-2 text-[13px] font-medium",
+            "py-2 text-[12px] font-medium",
             "transition-colors duration-200",
             isActive
               ? "text-[#ffcc42]"
@@ -381,8 +381,8 @@ export default function Navbar() {
         "transition-colors",
         "focus-within:border-[#ffcc42]/60",
         mobile
-          ? "w-full px-3 py-2.5"
-          : "h-9 w-36 px-2.5 2xl:w-44",
+          ? "w-full px-3 py-2"
+          : "h-8 w-32 px-2.5 2xl:w-36",
       ].join(" ")}
     >
       <Search
@@ -441,8 +441,8 @@ export default function Navbar() {
           [
             "inline-flex items-center justify-center gap-1.5",
             "rounded-lg border",
-            "px-3 py-2",
-            "text-xs font-semibold",
+            "px-2.5 py-1.5",
+            "text-[11px] font-semibold",
             "transition-colors",
             mobile ? "w-full" : "",
             isActive
@@ -464,8 +464,8 @@ export default function Navbar() {
           [
             "inline-flex items-center justify-center gap-1.5",
             "rounded-lg border",
-            "px-3 py-2",
-            "text-xs font-semibold",
+            "px-2.5 py-1.5",
+            "text-[11px] font-semibold",
             "transition-colors",
             mobile ? "w-full" : "",
             isActive
@@ -489,8 +489,8 @@ export default function Navbar() {
           "rounded-lg",
           "bg-gradient-to-r",
           "from-[#ffe27a] to-[#ffbd30]",
-          "px-3 py-2",
-          "text-xs font-bold text-black",
+          "px-2.5 py-1.5",
+          "text-[11px] font-bold text-black",
           "transition hover:brightness-110",
           "disabled:cursor-not-allowed",
           "disabled:opacity-60",
@@ -522,7 +522,7 @@ export default function Navbar() {
         className={[
           "inline-flex items-center justify-center",
           "rounded-lg border border-white/25",
-          "px-4 py-2",
+          "px-3 py-1.5",
           "text-xs font-semibold text-white",
           "transition hover:border-[#ffcc42]",
           mobile ? "w-full" : "",
@@ -539,7 +539,7 @@ export default function Navbar() {
           "rounded-lg",
           "bg-gradient-to-r",
           "from-[#ffe27a] to-[#ffbd30]",
-          "px-4 py-2",
+          "px-3 py-1.5",
           "text-xs font-bold text-black",
           "transition hover:brightness-110",
           mobile ? "w-full" : "",
@@ -589,7 +589,7 @@ export default function Navbar() {
       {/* MAIN NAVBAR                                       */}
       {/* ================================================= */}
 
-      <div className="mx-auto flex min-h-[64px] max-w-[1600px] items-center justify-between gap-3 px-4 sm:px-6 xl:px-8">
+      <div className="mx-auto flex min-h-[60px] max-w-[1600px] items-center justify-between gap-2 px-4 sm:px-5 lg:px-6">
         {/* =============================================== */}
         {/* BRAND                                           */}
         {/* =============================================== */}
@@ -600,14 +600,14 @@ export default function Navbar() {
           aria-label="PremiumChat home"
           className="flex shrink-0 items-center gap-1.5"
         >
-          <Crown
-            size={30}
+            <Crown
+            size={24}
             strokeWidth={2.2}
             className="text-[#ffcc42]"
             fill="#ffcc42"
           />
 
-          <span className="text-xl font-extrabold tracking-tight text-white sm:text-[23px]">
+          <span className="text-[18px] font-extrabold tracking-tight text-white">
             Premium
             <span className="text-[#ffcc42]">
               Chat
@@ -621,7 +621,7 @@ export default function Navbar() {
 
         <nav
           aria-label="Desktop navigation"
-          className="hidden items-center gap-4 xl:flex 2xl:gap-6"
+          className="hidden items-center gap-3 lg:flex xl:gap-4"
         >
           {publicLinks.map(renderNavigationLink)}
         </nav>
@@ -630,7 +630,7 @@ export default function Navbar() {
         {/* DESKTOP ACTIONS                                 */}
         {/* =============================================== */}
 
-        <div className="hidden shrink-0 items-center gap-2 xl:flex">
+        <div className="hidden shrink-0 items-center gap-1.5 lg:flex xl:gap-2">
           {renderSearch()}
 
           {renderAccountActions()}
@@ -652,7 +652,7 @@ export default function Navbar() {
           }
           aria-expanded={menuOpen}
           aria-controls="premiumchat-mobile-navigation"
-          className="rounded-lg border border-white/20 p-2 text-white transition hover:border-[#ffcc42] xl:hidden"
+          className="rounded-lg border border-white/20 p-1.5 text-white transition hover:border-[#ffcc42] lg:hidden"
         >
           {menuOpen ? (
             <X size={20} />
@@ -670,7 +670,7 @@ export default function Navbar() {
         <nav
           id="premiumchat-mobile-navigation"
           aria-label="Mobile navigation"
-          className="max-h-[calc(100dvh-64px)] overflow-y-auto border-t border-white/10 bg-[#111115] px-4 py-5 sm:px-6 xl:hidden"
+          className="max-h-[calc(100dvh-60px)] overflow-y-auto border-t border-white/10 bg-[#111115] px-4 py-4 sm:px-5 lg:hidden"
         >
           {/* SEARCH */}
 

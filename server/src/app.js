@@ -1,4 +1,3 @@
-
 import express from "express";
 import cookieParser from "cookie-parser";
 import hpp from "hpp";
@@ -8,7 +7,10 @@ import authRoutes from "./routes/auth.routes.js";
 import creatorApplicationRoutes from "./routes/creatorApplication.routes.js";
 
 import adminCreatorApplicationRoutes from "./routes/adminCreatorApplication.routes.js";
+
 import conversationRoutes from "./routes/conversation.routes.js";
+
+import creatorMonetizationRoutes from "./routes/creatorMonetization.routes.js";
 
 import { env } from "./config/env.js";
 
@@ -34,7 +36,9 @@ import {
 } from "./middleware/notFound.middleware.js";
 
 import healthRoutes from "./routes/health.routes.js";
+
 import securityTestRoutes from "./routes/securityTest.routes.js";
+
 import creatorDiscoveryRoutes from "./routes/creatorDiscovery.routes.js";
 
 const app = express();
@@ -163,23 +167,61 @@ app.use(
   creatorApplicationRoutes
 );
 
-
+/*
+ * ============================================================
+ * ADMIN CREATOR APPLICATION ROUTES
+ * ============================================================
+ */
 
 app.use(
   `${env.API_PREFIX}/admin/creator-applications`,
   adminCreatorApplicationRoutes
 );
 
-
+/*
+ * ============================================================
+ * CONVERSATION ROUTES
+ * ============================================================
+ */
 
 app.use(
   `${env.API_PREFIX}/conversations`,
   conversationRoutes
 );
 
+/*
+ * ============================================================
+ * CREATOR DISCOVERY ROUTES
+ * ============================================================
+ *
+ * Preserving the existing route registration.
+ */
+
 app.use(
   "/api/creators",
   creatorDiscoveryRoutes
+);
+
+/*
+ * ============================================================
+ * CREATOR MONETIZATION ROUTES
+ * ============================================================
+ *
+ * GET   /api/creator/monetization
+ * PATCH /api/creator/monetization
+ *
+ * Protected by:
+ *
+ * - requireAuth
+ * - requireCreator
+ *
+ * Only approved, age-verified creators
+ * can access these endpoints.
+ */
+
+app.use(
+  `${env.API_PREFIX}/creator`,
+  creatorMonetizationRoutes
 );
 
 /*

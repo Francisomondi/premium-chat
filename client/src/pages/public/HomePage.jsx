@@ -1,107 +1,141 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   ArrowRight,
-  CheckCircle2,
   Crown,
-  Heart,
   LockKeyhole,
   MessageCircle,
   Play,
   ShieldCheck,
+  Sparkles,
   Users,
   Video,
   X,
 } from "lucide-react";
 
-import {
-  Link,
-  useNavigate,
-} from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 
 import { useAuthStore } from "../../store/useAuthStore.js";
+
 import PopularCreators from "../../components/creator/PopularCreators.jsx";
 
 /**
  * ============================================================
- * PREMIUMCHAT — PREMIUM LANDING PAGE
+ * PREMIUMCHAT — HOMEPAGE
  * ============================================================
  *
- * STEP 4.1
+ * UI CLEANUP 1.2
  *
- * Features:
+ * Improvements:
+ * - Compact typography
+ * - Balanced hero layout
+ * - Cleaner buttons
+ * - Improved feature cards
+ * - Responsive spacing
+ * - Refined How It Works section
+ * - Cleaner CTA section
+ * - Accessible introduction dialog
  *
- * - Black and gold theme
- * - Cinematic hero section
- * - Floating chat notification
- * - Trust indicators
- * - Popular creators section
- * - How it works
- * - Pricing information
- * - Responsive layout
+ * Preserves:
+ * - Authentication-aware navigation
+ * - Existing PopularCreators component
+ * - Hero image
+ * - Introduction dialog
+ * - Development status link
  *
- * IMPORTANT:
- *
- * Creator discovery is not connected yet.
- * Do not display fictional creator accounts.
+ * No fictional creator accounts or statistics.
+ */
+
+const GOLD = "#ffcc42";
+
+/**
+ * ============================================================
+ * FEATURES
+ * ============================================================
  */
 
 const features = [
   {
     icon: ShieldCheck,
-    title: "Secure & Private",
-    description: "Your privacy matters",
+    title: "Private Conversations",
+    description: "Connect with confidence.",
   },
   {
     icon: LockKeyhole,
-    title: "Exclusive Content",
-    description: "Premium creator experiences",
+    title: "Exclusive Experiences",
+    description: "More ways to connect.",
   },
   {
     icon: Users,
-    title: "Real Creators",
-    description: "Authentic connections",
+    title: "Discover Creators",
+    description: "Find people worth following.",
   },
 ];
+
+/**
+ * ============================================================
+ * HOW IT WORKS
+ * ============================================================
+ */
 
 const steps = [
   {
     number: "01",
-    title: "Create Your Account",
+    title: "Create an Account",
     description:
       "Sign up and set up your PremiumChat profile.",
   },
   {
     number: "02",
-    title: "Discover Creators",
+    title: "Explore Creators",
     description:
-      "Explore creators and find people you'd like to connect with.",
+      "Discover creators and find someone you'd like to connect with.",
   },
   {
     number: "03",
-    title: "Start a Conversation",
+    title: "Start Chatting",
     description:
-      "Connect privately through our messaging experience.",
+      "Open a creator's profile and start a private conversation.",
   },
 ];
 
-function FeatureItem({
-  icon: Icon,
-  title,
-  description,
-}) {
+/**
+ * ============================================================
+ * FEATURE CARD
+ * ============================================================
+ */
+
+function FeatureItem({ icon: Icon, title, description }) {
   return (
-    <div className="flex items-center gap-3">
-      <div className="flex shrink-0 items-center justify-center text-[#ffcc42]">
-        <Icon size={29} strokeWidth={2.2} />
+    <div
+      className={[
+        "flex items-start gap-3",
+        "rounded-xl border border-white/10",
+        "bg-white/[0.035]",
+        "px-4 py-3",
+        "transition-colors",
+        "hover:border-[#ffcc42]/25",
+        "hover:bg-white/[0.055]",
+      ].join(" ")}
+    >
+      <div
+        className={[
+          "flex h-9 w-9 shrink-0",
+          "items-center justify-center",
+          "rounded-lg",
+          "bg-[#ffcc42]/10",
+          "text-[#ffcc42]",
+        ].join(" ")}
+      >
+        <Icon size={18} strokeWidth={1.9} />
       </div>
 
-      <div>
-        <h3 className="text-sm font-semibold text-white">
+      <div className="min-w-0">
+        <h3 className="text-[13px] font-semibold text-white">
           {title}
         </h3>
 
-        <p className="mt-0.5 text-xs text-zinc-400">
+        <p className="mt-1 text-xs leading-5 text-zinc-400">
           {description}
         </p>
       </div>
@@ -109,146 +143,463 @@ function FeatureItem({
   );
 }
 
+/**
+ * ============================================================
+ * DECORATIVE FLOATING MESSAGE
+ * ============================================================
+ *
+ * This is decorative UI, not a real chat message.
+ */
+
 function FloatingMessage() {
   return (
     <div
       aria-hidden="true"
       className={[
-        "absolute right-[5%] top-[24%]",
+        "pointer-events-none absolute",
+        "right-[5%] top-[26%]",
         "hidden items-center gap-3",
-        "rounded-2xl border border-pink-500/70",
-        "bg-black/75 px-4 py-3",
-        "shadow-[0_15px_50px_rgba(0,0,0,0.45)]",
+        "rounded-xl",
+        "border border-[#ffcc42]/30",
+        "bg-[#111115]/90",
+        "px-4 py-3",
+        "shadow-[0_18px_50px_rgba(0,0,0,0.45)]",
         "backdrop-blur-xl",
-        "lg:flex",
+        "xl:flex",
       ].join(" ")}
     >
       <div
         className={[
-          "flex h-12 w-12 items-center",
-          "justify-center rounded-full",
+          "flex h-10 w-10 shrink-0",
+          "items-center justify-center",
+          "rounded-full",
           "bg-gradient-to-br",
-          "from-amber-400 to-pink-600",
-          "text-white",
+          "from-[#ffe27a] to-[#ffbd30]",
+          "text-black",
         ].join(" ")}
       >
-        <MessageCircle size={23} />
+        <MessageCircle size={19} />
       </div>
 
       <div>
-        <p className="text-sm font-medium text-white">
-          Hey 💛
+        <p className="text-xs font-semibold text-white">
+          Say hello
         </p>
 
-        <p className="mt-1 text-sm text-zinc-200">
-          Let's chat...
+        <p className="mt-1 text-[11px] text-zinc-300">
+          Great conversations start here.
         </p>
       </div>
-
-      <span className="ml-3 self-end text-xs text-zinc-400">
-        10:24
-      </span>
-
-      <span
-        className={[
-          "absolute -bottom-2 left-9",
-          "h-4 w-4 rotate-45",
-          "border-b border-r border-pink-500/70",
-          "bg-[#130b13]",
-        ].join(" ")}
-      />
     </div>
   );
 }
 
-
+/**
+ * ============================================================
+ * HOW IT WORKS SECTION
+ * ============================================================
+ */
 
 function HowItWorks() {
   return (
     <section
       id="how-it-works"
-      className="border-t border-white/10 bg-[#101014] py-20"
+      className={[
+        "scroll-mt-20",
+        "border-t border-white/10",
+        "bg-[#101014]",
+        "py-14 sm:py-16 lg:py-20",
+      ].join(" ")}
     >
-      <div className="mx-auto max-w-[1440px] px-5 sm:px-8 lg:px-12">
-        <div className="mx-auto max-w-2xl text-center">
-          <span className="text-xs font-bold uppercase tracking-[0.25em] text-[#ffcc42]">
-            Simple & Personal
-          </span>
+      <div className="mx-auto max-w-[1280px] px-4 sm:px-6 lg:px-8">
+        {/* SECTION HEADING */}
 
-          <h2 className="mt-4 text-3xl font-extrabold text-white sm:text-4xl">
+        <div className="mx-auto max-w-xl text-center">
+          <div className="inline-flex items-center gap-2 text-[#ffcc42]">
+            <Sparkles size={14} />
+
+            <span className="text-[10px] font-bold uppercase tracking-[0.22em] sm:text-xs">
+              Simple & Personal
+            </span>
+          </div>
+
+          <h2 className="mt-3 text-2xl font-extrabold tracking-tight text-white sm:text-[28px] lg:text-[32px]">
             How It{" "}
             <span className="text-[#ffcc42]">
               Works
             </span>
           </h2>
 
-          <p className="mt-4 text-zinc-400">
-            Connecting with creators is simple.
+          <p className="mt-3 text-[13px] leading-6 text-zinc-400 sm:text-sm">
+            Connect with creators in three simple steps.
           </p>
         </div>
 
-        <div className="mt-12 grid gap-5 md:grid-cols-3">
+        {/* STEPS */}
+
+        <div className="mt-9 grid gap-4 md:grid-cols-3 lg:mt-11">
           {steps.map((step) => (
             <div
               key={step.number}
-              className="rounded-2xl border border-white/10 bg-[#18181d] p-7"
+              className={[
+                "group relative",
+                "rounded-2xl",
+                "border border-white/10",
+                "bg-[#18181d]",
+                "p-5 sm:p-6",
+                "transition-all duration-200",
+                "hover:-translate-y-0.5",
+                "hover:border-[#ffcc42]/30",
+              ].join(" ")}
             >
-              <span className="text-4xl font-black text-[#ffcc42]">
-                {step.number}
-              </span>
+              <div className="flex items-center justify-between">
+                <span
+                  className={[
+                    "flex h-10 w-10",
+                    "items-center justify-center",
+                    "rounded-xl",
+                    "border border-[#ffcc42]/20",
+                    "bg-[#ffcc42]/10",
+                    "text-sm font-extrabold",
+                    "text-[#ffcc42]",
+                  ].join(" ")}
+                >
+                  {step.number}
+                </span>
 
-              <h3 className="mt-6 text-lg font-bold text-white">
+                <ArrowRight
+                  size={17}
+                  className="text-zinc-600 transition-colors group-hover:text-[#ffcc42]"
+                />
+              </div>
+
+              <h3 className="mt-5 text-[15px] font-bold text-white">
                 {step.title}
               </h3>
 
-              <p className="mt-3 text-sm leading-7 text-zinc-400">
+              <p className="mt-2 text-[13px] leading-6 text-zinc-400">
                 {step.description}
               </p>
             </div>
           ))}
         </div>
-      </div>
-    </section>
-  );
-}
 
-function PricingSection() {
-  return (
-    <section
-      id="pricing"
-      className="border-t border-white/10 bg-[#08080b] py-20"
-    >
-      <div className="mx-auto max-w-[1440px] px-5 sm:px-8 lg:px-12">
-        <div className="mx-auto max-w-2xl text-center">
-          <span className="text-xs font-bold uppercase tracking-[0.25em] text-[#ffcc42]">
-            Premium Experiences
-          </span>
+        {/* SECONDARY CTA */}
 
-          <h2 className="mt-4 text-3xl font-extrabold text-white sm:text-4xl">
-            Your Connection.{" "}
-            <span className="text-[#ffcc42]">
-              Your Choice.
-            </span>
-          </h2>
-
-          <p className="mt-4 text-sm leading-7 text-zinc-400">
-            Discover creators and explore exclusive
-            experiences. Paid features and their prices
-            will be shown when available.
-          </p>
-
+        <div className="mt-9 text-center">
           <Link
-            to="/register"
-            className="mt-8 inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-[#ffe27a] to-[#ffbd30] px-8 py-3 font-bold text-black transition hover:brightness-110"
+            to="/explore"
+            className={[
+              "inline-flex items-center gap-2",
+              "text-[13px] font-semibold",
+              "text-[#ffcc42]",
+              "transition hover:text-[#ffe27a]",
+            ].join(" ")}
           >
-            Get Started
-            <ArrowRight size={18} />
+            Explore Creators
+            <ArrowRight size={15} />
           </Link>
         </div>
       </div>
     </section>
   );
 }
+
+/**
+ * ============================================================
+ * FINAL CTA SECTION
+ * ============================================================
+ *
+ * Monetization is not implemented yet.
+ * Do not display invented pricing.
+ */
+
+function JoinSection({ isAuthenticated }) {
+  return (
+    <section
+      id="pricing"
+      className={[
+        "border-t border-white/10",
+        "bg-[#08080b]",
+        "py-14 sm:py-16 lg:py-20",
+      ].join(" ")}
+    >
+      <div className="mx-auto max-w-[1280px] px-4 sm:px-6 lg:px-8">
+        <div
+          className={[
+            "relative overflow-hidden",
+            "rounded-2xl",
+            "border border-[#ffcc42]/15",
+            "bg-gradient-to-br",
+            "from-[#1d1a12]",
+            "via-[#141316]",
+            "to-[#101014]",
+            "px-5 py-9",
+            "text-center",
+            "sm:px-8 sm:py-11",
+            "lg:py-12",
+          ].join(" ")}
+        >
+          {/* DECORATIVE GLOW */}
+
+          <div
+            aria-hidden="true"
+            className={[
+              "pointer-events-none",
+              "absolute -right-20 -top-24",
+              "h-64 w-64 rounded-full",
+              "bg-[#ffcc42]/10 blur-3xl",
+            ].join(" ")}
+          />
+
+          <div className="relative z-10 mx-auto max-w-xl">
+            <div
+              className={[
+                "mx-auto flex h-11 w-11",
+                "items-center justify-center",
+                "rounded-xl",
+                "border border-[#ffcc42]/20",
+                "bg-[#ffcc42]/10",
+                "text-[#ffcc42]",
+              ].join(" ")}
+            >
+              <Crown size={22} />
+            </div>
+
+            <h2 className="mt-5 text-2xl font-extrabold tracking-tight text-white sm:text-[28px]">
+              Your Next Great Conversation{" "}
+              <span className="text-[#ffcc42]">
+                Starts Here.
+              </span>
+            </h2>
+
+            <p className="mx-auto mt-3 max-w-md text-[13px] leading-6 text-zinc-400 sm:text-sm">
+              Discover creators, explore their profiles,
+              and connect through private conversations.
+            </p>
+
+            <Link
+              to={isAuthenticated ? "/explore" : "/register"}
+              className={[
+                "mt-6 inline-flex",
+                "min-h-10 items-center",
+                "justify-center gap-2",
+                "rounded-full",
+                "bg-gradient-to-r",
+                "from-[#ffe27a] to-[#ffbd30]",
+                "px-6",
+                "text-[13px] font-bold",
+                "text-black",
+                "transition hover:brightness-110",
+              ].join(" ")}
+            >
+              {isAuthenticated
+                ? "Explore Creators"
+                : "Join PremiumChat"}
+
+              <ArrowRight size={16} />
+            </Link>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/**
+ * ============================================================
+ * INTRODUCTION DIALOG
+ * ============================================================
+ */
+
+function IntroductionDialog({ onClose }) {
+  const closeButtonRef = useRef(null);
+
+  useEffect(() => {
+    const previousActiveElement = document.activeElement;
+    const previousOverflow = document.body.style.overflow;
+
+    document.body.style.overflow = "hidden";
+
+    closeButtonRef.current?.focus();
+
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") {
+        onClose();
+      }
+
+      if (event.key === "Tab") {
+        const dialog = document.getElementById(
+          "premiumchat-introduction-dialog"
+        );
+
+        if (!dialog) {
+          return;
+        }
+
+        const focusableElements = Array.from(
+          dialog.querySelectorAll(
+            'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])'
+          )
+        );
+
+        if (focusableElements.length === 0) {
+          return;
+        }
+
+        const firstElement = focusableElements[0];
+
+        const lastElement =
+          focusableElements[focusableElements.length - 1];
+
+        if (
+          event.shiftKey &&
+          document.activeElement === firstElement
+        ) {
+          event.preventDefault();
+          lastElement.focus();
+        } else if (
+          !event.shiftKey &&
+          document.activeElement === lastElement
+        ) {
+          event.preventDefault();
+          firstElement.focus();
+        }
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+
+      document.removeEventListener(
+        "keydown",
+        handleKeyDown
+      );
+
+      if (previousActiveElement?.isConnected) {
+        previousActiveElement.focus();
+      }
+    };
+  }, [onClose]);
+
+  return (
+    <div
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) {
+          onClose();
+        }
+      }}
+      className={[
+        "fixed inset-0 z-[100]",
+        "flex items-center justify-center",
+        "bg-black/85",
+        "px-4 py-6",
+        "backdrop-blur-md",
+      ].join(" ")}
+    >
+      <div
+        id="premiumchat-introduction-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="premiumchat-video-title"
+        aria-describedby="premiumchat-video-description"
+        className={[
+          "w-full max-w-lg",
+          "rounded-2xl",
+          "border border-white/15",
+          "bg-[#17171d]",
+          "p-5 sm:p-6",
+          "shadow-2xl",
+        ].join(" ")}
+      >
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2 text-[#ffcc42]">
+              <Video size={19} />
+
+              <h2
+                id="premiumchat-video-title"
+                className="text-lg font-bold text-white"
+              >
+                PremiumChat Introduction
+              </h2>
+            </div>
+
+            <p
+              id="premiumchat-video-description"
+              className="mt-3 text-[13px] leading-6 text-zinc-300"
+            >
+              Our introduction video is being prepared.
+              In the meantime, you can explore creators
+              and learn how PremiumChat works.
+            </p>
+          </div>
+
+          <button
+            ref={closeButtonRef}
+            type="button"
+            onClick={onClose}
+            aria-label="Close introduction dialog"
+            className={[
+              "shrink-0 rounded-lg",
+              "p-2 text-zinc-400",
+              "transition",
+              "hover:bg-white/10",
+              "hover:text-white",
+            ].join(" ")}
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="mt-6 flex flex-wrap gap-3">
+          <Link
+            to="/explore"
+            onClick={onClose}
+            className={[
+              "inline-flex min-h-10",
+              "items-center justify-center gap-2",
+              "rounded-full",
+              "bg-[#ffcc42]",
+              "px-5",
+              "text-[12px] font-bold text-black",
+              "transition hover:brightness-110",
+            ].join(" ")}
+          >
+            Explore Creators
+            <ArrowRight size={15} />
+          </Link>
+
+          <button
+            type="button"
+            onClick={onClose}
+            className={[
+              "inline-flex min-h-10",
+              "items-center justify-center",
+              "rounded-full",
+              "border border-white/20",
+              "px-5",
+              "text-[12px] font-medium",
+              "text-white",
+              "transition hover:border-white/40",
+            ].join(" ")}
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * ============================================================
+ * HOMEPAGE
+ * ============================================================
+ */
 
 export default function HomePage() {
   const navigate = useNavigate();
@@ -259,10 +610,20 @@ export default function HomePage() {
 
   const [videoOpen, setVideoOpen] = useState(false);
 
+  /**
+   * ==========================================================
+   * AUTHENTICATION-AWARE NAVIGATION
+   * ==========================================================
+   */
+
   const handleGetStarted = () => {
     navigate(
       isAuthenticated ? "/explore" : "/register"
     );
+  };
+
+  const closeIntroduction = () => {
+    setVideoOpen(false);
   };
 
   return (
@@ -271,8 +632,16 @@ export default function HomePage() {
       {/* HERO                                              */}
       {/* ================================================= */}
 
-      <section className="relative min-h-[570px] overflow-hidden bg-[#08080b] sm:min-h-[620px] lg:min-h-[570px]">
-        {/* HERO PHOTOGRAPH */}
+      <section
+        className={[
+          "relative overflow-hidden",
+          "bg-[#08080b]",
+          "min-h-[520px]",
+          "sm:min-h-[560px]",
+          "lg:min-h-[570px]",
+        ].join(" ")}
+      >
+        {/* HERO IMAGE */}
 
         <div className="absolute inset-0">
           <img
@@ -283,78 +652,176 @@ export default function HomePage() {
 
           {/* DARK OVERLAYS */}
 
-          <div className="absolute inset-0 bg-black/40" />
+          <div className="absolute inset-0 bg-black/45" />
 
-          <div className="absolute inset-0 bg-gradient-to-r from-[#08080b] via-[#08080b]/90 to-transparent" />
+          <div
+            className={[
+              "absolute inset-0",
+              "bg-gradient-to-r",
+              "from-[#08080b]",
+              "via-[#08080b]/90",
+              "to-[#08080b]/30",
+            ].join(" ")}
+          />
 
-          <div className="absolute inset-0 bg-gradient-to-t from-[#08080b]/80 via-transparent to-black/20" />
+          <div
+            className={[
+              "absolute inset-0",
+              "bg-gradient-to-t",
+              "from-[#08080b]/90",
+              "via-transparent",
+              "to-black/20",
+            ].join(" ")}
+          />
 
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_70%_45%,rgba(179,18,74,0.15),transparent_55%)]" />
+          <div
+            className={[
+              "absolute inset-0",
+              "bg-[radial-gradient(circle_at_75%_45%,rgba(255,204,66,0.08),transparent_55%)]",
+            ].join(" ")}
+          />
         </div>
 
         {/* HERO CONTENT */}
 
-        <div className="relative z-10 mx-auto flex min-h-[570px] max-w-[1440px] items-center px-5 py-16 sm:min-h-[620px] sm:px-8 lg:min-h-[570px] lg:px-12">
-          <div className="max-w-[650px]">
-            <p className="text-[11px] font-medium uppercase tracking-[0.38em] text-zinc-300 sm:text-sm">
-              Real People. Exclusive Connections.
-            </p>
+        <div
+          className={[
+            "relative z-10",
+            "mx-auto flex",
+            "min-h-[520px]",
+            "max-w-[1280px]",
+            "items-center",
+            "px-4 py-14",
+            "sm:min-h-[560px]",
+            "sm:px-6 sm:py-16",
+            "lg:min-h-[570px]",
+            "lg:px-8",
+          ].join(" ")}
+        >
+          <div className="w-full max-w-[600px]">
+            {/* EYEBROW */}
 
-            <h1 className="mt-5 text-[clamp(3.4rem,6vw,6rem)] font-black leading-[0.97] tracking-[-0.055em] text-white">
-              Chat with
+            <div className="inline-flex items-center gap-2">
+              <span className="h-1.5 w-1.5 rounded-full bg-[#ffcc42]" />
+
+              <p
+                className={[
+                  "text-[10px]",
+                  "font-semibold uppercase",
+                  "tracking-[0.22em]",
+                  "text-zinc-300",
+                  "sm:text-[11px]",
+                ].join(" ")}
+              >
+                Real People. Real Connections.
+              </p>
+            </div>
+
+            {/* HEADLINE */}
+
+            <h1
+              className={[
+                "mt-4",
+                "text-[clamp(2.5rem,5vw,4rem)]",
+                "font-black",
+                "leading-[1.08]",
+                "tracking-[-0.045em]",
+                "text-white",
+              ].join(" ")}
+            >
+              Connect With
               <br />
               Your Favourite
               <br />
-              <span className="bg-gradient-to-b from-[#ffe78b] to-[#ffc334] bg-clip-text text-transparent">
+              <span
+                className={[
+                  "bg-gradient-to-r",
+                  "from-[#ffe78b]",
+                  "to-[#ffc334]",
+                  "bg-clip-text",
+                  "text-transparent",
+                ].join(" ")}
+              >
                 Creators
               </span>
             </h1>
 
-            <p className="mt-6 max-w-[560px] text-lg leading-8 text-zinc-300 sm:text-xl">
-              Have real conversations, get exclusive
-              photos and videos, and support the
-              creators you love.
+            {/* DESCRIPTION */}
+
+            <p
+              className={[
+                "mt-5 max-w-[470px]",
+                "text-[13px]",
+                "leading-6",
+                "text-zinc-300",
+                "sm:text-sm sm:leading-7",
+              ].join(" ")}
+            >
+              Discover creators, explore their profiles,
+              and connect through private conversations
+              on PremiumChat.
             </p>
 
             {/* CTA BUTTONS */}
 
-            <div className="mt-8 flex flex-wrap items-center gap-4">
+            <div className="mt-7 flex flex-wrap items-center gap-3">
               <button
                 type="button"
                 onClick={handleGetStarted}
                 className={[
-                  "inline-flex min-h-14",
-                  "items-center justify-center gap-3",
+                  "inline-flex min-h-11",
+                  "items-center justify-center gap-2",
                   "rounded-full",
                   "bg-gradient-to-r",
-                  "from-[#ffe27a] to-[#ffbd30]",
-                  "px-10 text-base font-bold",
-                  "text-black shadow-lg",
-                  "shadow-amber-500/15",
-                  "transition hover:brightness-110",
+                  "from-[#ffe27a]",
+                  "to-[#ffbd30]",
+                  "px-6",
+                  "text-[13px] font-bold",
+                  "text-black",
+                  "shadow-lg shadow-amber-500/10",
+                  "transition",
+                  "hover:brightness-110",
+                  "focus-visible:outline",
+                  "focus-visible:outline-2",
+                  "focus-visible:outline-offset-2",
+                  "focus-visible:outline-[#ffcc42]",
                 ].join(" ")}
               >
-                Get Started
-                <ArrowRight size={19} />
+                {isAuthenticated
+                  ? "Explore Creators"
+                  : "Get Started"}
+
+                <ArrowRight size={16} />
               </button>
 
               <button
                 type="button"
                 onClick={() => setVideoOpen(true)}
                 className={[
-                  "inline-flex min-h-14",
-                  "items-center gap-3",
-                  "rounded-full border",
-                  "border-white/35",
+                  "inline-flex min-h-11",
+                  "items-center justify-center gap-2",
+                  "rounded-full",
+                  "border border-white/25",
                   "bg-black/30",
-                  "px-6 text-sm font-semibold",
-                  "text-white backdrop-blur",
-                  "transition hover:border-[#ffcc42]",
+                  "px-5",
+                  "text-[12px] font-semibold",
+                  "text-white",
+                  "backdrop-blur-sm",
+                  "transition",
+                  "hover:border-[#ffcc42]/60",
+                  "hover:bg-white/5",
                 ].join(" ")}
               >
-                <span className="flex h-10 w-10 items-center justify-center rounded-full border border-white/70">
+                <span
+                  className={[
+                    "flex h-7 w-7",
+                    "items-center justify-center",
+                    "rounded-full",
+                    "border border-white/40",
+                  ].join(" ")}
+                >
                   <Play
-                    size={17}
+                    size={12}
                     fill="currentColor"
                   />
                 </span>
@@ -363,9 +830,15 @@ export default function HomePage() {
               </button>
             </div>
 
-            {/* TRUST INDICATORS */}
+            {/* FEATURES */}
 
-            <div className="mt-10 flex flex-wrap gap-x-8 gap-y-5">
+            <div
+              className={[
+                "mt-9 grid gap-3",
+                "sm:grid-cols-3",
+                "lg:mt-10",
+              ].join(" ")}
+            >
               {features.map((feature) => (
                 <FeatureItem
                   key={feature.title}
@@ -374,14 +847,16 @@ export default function HomePage() {
               ))}
             </div>
 
-            <p className="mt-7 text-xs text-zinc-400">
-              Adults 18+ only. Verification is required
-              for restricted features.
+            {/* AGE NOTICE */}
+
+            <p className="mt-6 text-[11px] leading-5 text-zinc-400">
+              For adults aged 18+. Verification is required
+              for age-restricted features.
             </p>
           </div>
         </div>
 
-        {/* FLOATING CHAT */}
+        {/* DECORATIVE FLOATING MESSAGE */}
 
         <FloatingMessage />
       </section>
@@ -399,90 +874,30 @@ export default function HomePage() {
       <HowItWorks />
 
       {/* ================================================= */}
-      {/* PRICING                                           */}
+      {/* FINAL CTA                                         */}
       {/* ================================================= */}
 
-      <PricingSection />
+      <JoinSection isAuthenticated={isAuthenticated} />
 
       {/* ================================================= */}
-      {/* VIDEO MODAL                                       */}
+      {/* INTRODUCTION DIALOG                               */}
       {/* ================================================= */}
 
       {videoOpen && (
-        <div
-          role="presentation"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) {
-              setVideoOpen(false);
-            }
-          }}
-          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/85 px-4 backdrop-blur-md"
-        >
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="premiumchat-video-title"
-            className="w-full max-w-xl rounded-2xl border border-white/15 bg-[#17171d] p-7 shadow-2xl"
-          >
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <div className="flex items-center gap-2 text-[#ffcc42]">
-                  <Video size={22} />
-
-                  <h2
-                    id="premiumchat-video-title"
-                    className="text-xl font-bold"
-                  >
-                    PremiumChat Introduction
-                  </h2>
-                </div>
-
-                <p className="mt-4 text-sm leading-7 text-zinc-300">
-                  Our introduction video is being prepared.
-                  In the meantime, discover how PremiumChat
-                  works and explore the platform.
-                </p>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => setVideoOpen(false)}
-                aria-label="Close video dialog"
-                className="rounded-lg p-2 text-zinc-400 hover:bg-white/10 hover:text-white"
-              >
-                <X size={20} />
-              </button>
-            </div>
-
-            <div className="mt-7 flex flex-wrap gap-3">
-              <Link
-                to="/explore"
-                onClick={() => setVideoOpen(false)}
-                className="inline-flex items-center gap-2 rounded-full bg-[#ffcc42] px-6 py-3 text-sm font-bold text-black"
-              >
-                Explore Creators
-                <ArrowRight size={17} />
-              </Link>
-
-              <button
-                type="button"
-                onClick={() => setVideoOpen(false)}
-                className="rounded-full border border-white/20 px-6 py-3 text-sm font-medium text-white"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
+        <IntroductionDialog
+          onClose={closeIntroduction}
+        />
       )}
 
-      {/* DEVELOPMENT LINK */}
+      {/* ================================================= */}
+      {/* DEVELOPMENT STATUS LINK                           */}
+      {/* ================================================= */}
 
       {import.meta.env.DEV && (
-        <div className="border-t border-white/10 bg-[#08080b] px-6 py-5 text-center">
+        <div className="border-t border-white/10 bg-[#08080b] px-4 py-4 text-center">
           <Link
             to="/dev/status"
-            className="text-xs text-zinc-500 hover:text-[#ffcc42]"
+            className="text-[11px] text-zinc-500 transition hover:text-[#ffcc42]"
           >
             Development API Status
           </Link>

@@ -21,6 +21,7 @@ import {
 
 import Card from "../../components/ui/Card.jsx";
 import Alert from "../../components/ui/Alert.jsx";
+import {getSafeRedirectPath} from "../../utils/authRedirect.js";
 
 import { useAuthStore } from "../../store/useAuthStore.js";
 
@@ -41,91 +42,6 @@ import { useAuthStore } from "../../store/useAuthStore.js";
 const EMAIL_REGEX =
   /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-  /**
- * Return the appropriate dashboard for the user's role.
- *
- * Creator dashboard access requires approved creator
- * status and completed age verification.
- */
-const getDashboardPath = (user) => {
-  if (
-    user?.role === "ADMIN" &&
-    user?.accountStatus === "ACTIVE"
-  ) {
-    return "/admin/dashboard";
-  }
-
-  if (
-    user?.role === "CREATOR" &&
-    user?.accountStatus === "ACTIVE" &&
-    user?.ageVerificationStatus === "VERIFIED" &&
-    user?.creatorApplicationStatus === "APPROVED"
-  ) {
-    return "/creator/dashboard";
-  }
-
-  return "/dashboard";
-};
-
-/**
- * Only restore a known, authorized protected route.
- *
- * Do not accept arbitrary URLs or external redirects.
- */
-const getSafeRedirectPath = (requestedPath, user) => {
-  const fallback = getDashboardPath(user);
-
-  if (
-    typeof requestedPath !== "string" ||
-    !requestedPath.startsWith("/") ||
-    requestedPath.startsWith("//") ||
-    requestedPath.includes("\\") ||
-    requestedPath.includes("\n") ||
-    requestedPath.includes("\r")
-  ) {
-    return fallback;
-  }
-
-  let pathname;
-
-  try {
-    const url = new URL(requestedPath, "http://premiumchat.local");
-
-    if (url.origin !== "http://premiumchat.local") {
-      return fallback;
-    }
-
-    pathname = url.pathname;
-  } catch {
-    return fallback;
-  }
-
-  const allowedPaths = new Set([
-    "/dashboard",
-    "/creator/dashboard",
-    "/admin/dashboard",
-  ]);
-
-  if (!allowedPaths.has(pathname)) {
-    return fallback;
-  }
-
-  if (
-    pathname === "/admin/dashboard" &&
-    fallback !== "/admin/dashboard"
-  ) {
-    return fallback;
-  }
-
-  if (
-    pathname === "/creator/dashboard" &&
-    fallback !== "/creator/dashboard"
-  ) {
-    return fallback;
-  }
-
-  return requestedPath;
-};
 
 export default function LoginPage() {
   const navigate = useNavigate();
@@ -534,6 +450,9 @@ export default function LoginPage() {
           Don't have an account?{" "}
           <Link
             to="/register"
+            state={{
+              from: redirectTo,
+            }}
             className="font-semibold text-accent hover:underline"
           >
             Create an account

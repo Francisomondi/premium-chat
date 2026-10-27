@@ -14,6 +14,7 @@ import {
   X,
   ShieldCheck,
   Sparkles,
+  ArrowRight,
 } from "lucide-react";
 
 import CreatorGrid from "../../components/creator/CreatorGrid.jsx";
@@ -22,28 +23,43 @@ import {
   getPublicCreators,
 } from "../../api/creator.api.js";
 
+import { useAuthStore } from "../../store/useAuthStore.js";
+
 /**
  * ============================================================
  * PREMIUMCHAT — EXPLORE CREATORS PAGE
  * ============================================================
  *
- * STEP 4.2.5.1
+ * UI CLEANUP 1.3
  *
- * Features:
- * - Public creator discovery
- * - Search by display name
- * - URL search parameter synchronization
+ * Improvements:
+ * - Compact hero section
+ * - Smaller typography
+ * - Responsive search
+ * - Cleaner results header
+ * - Compact pagination
+ * - Authentication-aware CTA
+ *
+ * Preserves:
+ * - Existing creator discovery API
+ * - URL search parameters
  * - Pagination
- * - Responsive creator cards
- * - Loading and error states
+ * - Request cancellation
+ * - Loading/error states
  * - Retry functionality
- *
- * API:
- *
- * GET /api/creators
+ * - Existing CreatorGrid
  */
 
 const PAGE_LIMIT = 12;
+
+const DEFAULT_PAGINATION = {
+  page: 1,
+  limit: PAGE_LIMIT,
+  total: 0,
+  totalPages: 0,
+  hasNextPage: false,
+  hasPreviousPage: false,
+};
 
 export default function ExplorePage() {
   /**
@@ -55,8 +71,7 @@ export default function ExplorePage() {
   const [searchParams, setSearchParams] =
     useSearchParams();
 
-  const searchQuery =
-    searchParams.get("q") || "";
+  const searchQuery = searchParams.get("q") || "";
 
   const requestedPage = Number(
     searchParams.get("page") || 1
@@ -70,6 +85,16 @@ export default function ExplorePage() {
 
   /**
    * ==========================================================
+   * AUTHENTICATION
+   * ==========================================================
+   */
+
+  const isAuthenticated = useAuthStore(
+    (state) => state.isAuthenticated
+  );
+
+  /**
+   * ==========================================================
    * STATE
    * ==========================================================
    */
@@ -79,17 +104,11 @@ export default function ExplorePage() {
 
   const [creators, setCreators] = useState([]);
 
-  const [pagination, setPagination] = useState({
-    page: 1,
-    limit: PAGE_LIMIT,
-    total: 0,
-    totalPages: 0,
-    hasNextPage: false,
-    hasPreviousPage: false,
-  });
+  const [pagination, setPagination] = useState(
+    DEFAULT_PAGINATION
+  );
 
-  const [isLoading, setIsLoading] =
-    useState(true);
+  const [isLoading, setIsLoading] = useState(true);
 
   const [error, setError] = useState(null);
 
@@ -143,12 +162,8 @@ export default function ExplorePage() {
 
         setPagination(
           result.pagination || {
+            ...DEFAULT_PAGINATION,
             page: currentPage,
-            limit: PAGE_LIMIT,
-            total: 0,
-            totalPages: 0,
-            hasNextPage: false,
-            hasPreviousPage: false,
           }
         );
       } catch (requestError) {
@@ -169,6 +184,7 @@ export default function ExplorePage() {
         );
 
         setCreators([]);
+        setPagination(DEFAULT_PAGINATION);
       } finally {
         if (!controller.signal.aborted) {
           setIsLoading(false);
@@ -181,11 +197,7 @@ export default function ExplorePage() {
     return () => {
       controller.abort();
     };
-  }, [
-    currentPage,
-    searchQuery,
-    reloadKey,
-  ]);
+  }, [currentPage, searchQuery, reloadKey]);
 
   /**
    * ==========================================================
@@ -196,8 +208,7 @@ export default function ExplorePage() {
   const handleSearch = (event) => {
     event.preventDefault();
 
-    const normalizedQuery =
-      searchInput.trim();
+    const normalizedQuery = searchInput.trim();
 
     const nextParams = new URLSearchParams();
 
@@ -240,10 +251,7 @@ export default function ExplorePage() {
       nextParams.set("q", searchQuery);
     }
 
-    nextParams.set(
-      "page",
-      String(nextPage)
-    );
+    nextParams.set("page", String(nextPage));
 
     setSearchParams(nextParams);
 
@@ -271,44 +279,80 @@ export default function ExplorePage() {
 
   return (
     <div className="min-h-screen bg-[#09090c] text-white">
-      {/* ==================================================== */}
-      {/* HERO SECTION                                         */}
-      {/* ==================================================== */}
+      {/* ================================================= */}
+      {/* HERO                                              */}
+      {/* ================================================= */}
 
       <section className="relative overflow-hidden border-b border-white/10">
+        {/* DECORATIVE GLOW */}
+
         <div
           aria-hidden="true"
-          className="pointer-events-none absolute left-1/2 top-0 h-80 w-80 -translate-x-1/2 rounded-full bg-[#ffcc42]/10 blur-[120px]"
+          className={[
+            "pointer-events-none absolute",
+            "left-1/2 top-0",
+            "h-64 w-64",
+            "-translate-x-1/2",
+            "rounded-full",
+            "bg-[#ffcc42]/10",
+            "blur-[100px]",
+          ].join(" ")}
         />
 
-        <div className="relative mx-auto max-w-[1500px] px-4 pb-12 pt-14 sm:px-6 sm:pb-16 sm:pt-20 lg:px-10">
-          <div className="mx-auto max-w-3xl text-center">
+        <div
+          className={[
+            "relative mx-auto",
+            "max-w-[1280px]",
+            "px-4 pb-10 pt-11",
+            "sm:px-6 sm:pb-12 sm:pt-14",
+            "lg:px-8",
+          ].join(" ")}
+        >
+          <div className="mx-auto max-w-2xl text-center">
             {/* EYEBROW */}
 
-            <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-[#ffcc42]/20 bg-[#ffcc42]/5 px-4 py-2">
+            <div
+              className={[
+                "inline-flex items-center gap-2",
+                "rounded-full",
+                "border border-[#ffcc42]/20",
+                "bg-[#ffcc42]/5",
+                "px-3 py-1.5",
+              ].join(" ")}
+            >
               <Crown
-                size={15}
+                size={13}
                 className="text-[#ffcc42]"
               />
 
-              <span className="text-[11px] font-bold uppercase tracking-[0.2em] text-[#ffcc42]">
+              <span className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#ffcc42]">
                 PremiumChat Discovery
               </span>
             </div>
 
             {/* TITLE */}
 
-            <h1 className="text-4xl font-extrabold tracking-tight sm:text-5xl lg:text-6xl">
+            <h1
+              className={[
+                "mt-4",
+                "text-[30px]",
+                "font-extrabold",
+                "tracking-tight",
+                "sm:text-[36px]",
+                "lg:text-[42px]",
+              ].join(" ")}
+            >
               Explore{" "}
               <span className="text-[#ffcc42]">
                 Creators
               </span>
             </h1>
 
-            <p className="mx-auto mt-5 max-w-2xl text-sm leading-7 text-zinc-400 sm:text-base">
+            {/* DESCRIPTION */}
+
+            <p className="mx-auto mt-3 max-w-xl text-[13px] leading-6 text-zinc-400 sm:text-sm">
               Discover verified creators, explore their
-              profiles, and connect through private
-              conversations.
+              profiles, and start private conversations.
             </p>
 
             {/* SEARCH */}
@@ -316,11 +360,21 @@ export default function ExplorePage() {
             <form
               onSubmit={handleSearch}
               role="search"
-              className="mx-auto mt-9 flex max-w-2xl items-center gap-2 rounded-2xl border border-white/15 bg-[#17171c] p-2 shadow-xl transition focus-within:border-[#ffcc42]/60"
+              className={[
+                "mx-auto mt-7",
+                "flex max-w-xl",
+                "items-center gap-2",
+                "rounded-xl",
+                "border border-white/15",
+                "bg-[#17171c]",
+                "p-1.5",
+                "transition-colors",
+                "focus-within:border-[#ffcc42]/60",
+              ].join(" ")}
             >
               <Search
-                size={20}
-                className="ml-3 shrink-0 text-[#ffcc42]"
+                size={17}
+                className="ml-2 shrink-0 text-[#ffcc42]"
               />
 
               <input
@@ -332,7 +386,16 @@ export default function ExplorePage() {
                 placeholder="Search creators by name..."
                 aria-label="Search creators"
                 maxLength={100}
-                className="min-w-0 flex-1 bg-transparent px-2 py-3 text-sm text-white outline-none placeholder:text-zinc-500"
+                className={[
+                  "min-w-0 flex-1",
+                  "bg-transparent",
+                  "px-1 py-2",
+                  "text-[12px]",
+                  "text-white",
+                  "outline-none",
+                  "placeholder:text-zinc-500",
+                  "sm:text-[13px]",
+                ].join(" ")}
               />
 
               {searchInput && (
@@ -340,15 +403,25 @@ export default function ExplorePage() {
                   type="button"
                   onClick={handleClearSearch}
                   aria-label="Clear search"
-                  className="rounded-lg p-2 text-zinc-400 transition hover:bg-white/10 hover:text-white"
+                  className="rounded-lg p-1.5 text-zinc-400 transition hover:bg-white/10 hover:text-white"
                 >
-                  <X size={17} />
+                  <X size={15} />
                 </button>
               )}
 
               <button
                 type="submit"
-                className="shrink-0 rounded-xl bg-[#ffcc42] px-4 py-3 text-xs font-bold text-black transition hover:brightness-110 sm:px-6 sm:text-sm"
+                className={[
+                  "shrink-0",
+                  "rounded-lg",
+                  "bg-[#ffcc42]",
+                  "px-3 py-2",
+                  "text-[11px]",
+                  "font-bold text-black",
+                  "transition",
+                  "hover:brightness-110",
+                  "sm:px-5 sm:text-xs",
+                ].join(" ")}
               >
                 Search
               </button>
@@ -356,9 +429,9 @@ export default function ExplorePage() {
 
             {/* TRUST LABEL */}
 
-            <div className="mt-6 flex items-center justify-center gap-2 text-xs text-zinc-500">
+            <div className="mt-4 flex items-center justify-center gap-2 text-[11px] text-zinc-500">
               <ShieldCheck
-                size={16}
+                size={14}
                 className="text-[#ffcc42]"
               />
 
@@ -370,33 +443,40 @@ export default function ExplorePage() {
         </div>
       </section>
 
-      {/* ==================================================== */}
-      {/* CREATOR RESULTS                                      */}
-      {/* ==================================================== */}
+      {/* ================================================= */}
+      {/* CREATOR RESULTS                                   */}
+      {/* ================================================= */}
 
-      <section className="mx-auto max-w-[1500px] px-4 py-12 sm:px-6 sm:py-16 lg:px-10">
-        {/* SECTION HEADER */}
+      <section
+        className={[
+          "mx-auto max-w-[1280px]",
+          "px-4 py-9",
+          "sm:px-6 sm:py-12",
+          "lg:px-8",
+        ].join(" ")}
+      >
+        {/* RESULTS HEADER */}
 
-        <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <div className="mb-3 flex items-center gap-2">
+            <div className="mb-2 flex items-center gap-2">
               <Sparkles
-                size={16}
+                size={14}
                 className="text-[#ffcc42]"
               />
 
-              <span className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#ffcc42]">
+              <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#ffcc42]">
                 Discover Connections
               </span>
             </div>
 
-            <h2 className="text-2xl font-bold sm:text-3xl">
+            <h2 className="text-xl font-bold sm:text-2xl">
               {searchQuery
                 ? "Search Results"
                 : "Discover Creators"}
             </h2>
 
-            <p className="mt-2 text-sm text-zinc-400">
+            <p className="mt-2 text-[12px] leading-5 text-zinc-400 sm:text-[13px]">
               {isLoading
                 ? "Loading creators..."
                 : error
@@ -408,9 +488,9 @@ export default function ExplorePage() {
           </div>
 
           {!searchQuery && (
-            <div className="flex items-center gap-2 text-xs text-zinc-500">
+            <div className="flex items-center gap-2 text-[11px] text-zinc-500">
               <Users
-                size={16}
+                size={14}
                 className="text-[#ffcc42]"
               />
 
@@ -421,7 +501,7 @@ export default function ExplorePage() {
           )}
         </div>
 
-        {/* CREATOR GRID */}
+        {/* EXISTING CREATOR GRID */}
 
         <CreatorGrid
           creators={creators}
@@ -431,18 +511,25 @@ export default function ExplorePage() {
           skeletonCount={PAGE_LIMIT}
         />
 
-        {/* ================================================== */}
-        {/* PAGINATION                                         */}
-        {/* ================================================== */}
+        {/* ================================================= */}
+        {/* PAGINATION                                        */}
+        {/* ================================================= */}
 
         {!isLoading &&
           !error &&
           pagination.totalPages > 1 && (
             <nav
               aria-label="Creator pagination"
-              className="mt-12 flex flex-col items-center justify-between gap-4 border-t border-white/10 pt-8 sm:flex-row"
+              className={[
+                "mt-9 flex flex-col",
+                "items-center justify-between",
+                "gap-4",
+                "border-t border-white/10",
+                "pt-6",
+                "sm:flex-row",
+              ].join(" ")}
             >
-              <p className="text-xs text-zinc-400">
+              <p className="text-[12px] text-zinc-400">
                 Page{" "}
                 <span className="font-semibold text-white">
                   {pagination.page}
@@ -453,7 +540,7 @@ export default function ExplorePage() {
                 </span>
               </p>
 
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2">
                 <button
                   type="button"
                   onClick={() =>
@@ -462,9 +549,20 @@ export default function ExplorePage() {
                   disabled={
                     !pagination.hasPreviousPage
                   }
-                  className="inline-flex items-center gap-2 rounded-lg border border-white/15 px-4 py-2.5 text-xs font-semibold text-white transition hover:border-[#ffcc42]/50 disabled:cursor-not-allowed disabled:opacity-40"
+                  className={[
+                    "inline-flex items-center gap-1.5",
+                    "rounded-lg",
+                    "border border-white/15",
+                    "px-3 py-2",
+                    "text-[11px] font-semibold",
+                    "text-white",
+                    "transition",
+                    "hover:border-[#ffcc42]/50",
+                    "disabled:cursor-not-allowed",
+                    "disabled:opacity-40",
+                  ].join(" ")}
                 >
-                  <ChevronLeft size={16} />
+                  <ChevronLeft size={15} />
                   Previous
                 </button>
 
@@ -473,43 +571,83 @@ export default function ExplorePage() {
                   onClick={() =>
                     handlePageChange(currentPage + 1)
                   }
-                  disabled={
-                    !pagination.hasNextPage
-                  }
-                  className="inline-flex items-center gap-2 rounded-lg border border-[#ffcc42]/50 bg-[#ffcc42]/10 px-4 py-2.5 text-xs font-semibold text-[#ffcc42] transition hover:bg-[#ffcc42] hover:text-black disabled:cursor-not-allowed disabled:opacity-40"
+                  disabled={!pagination.hasNextPage}
+                  className={[
+                    "inline-flex items-center gap-1.5",
+                    "rounded-lg",
+                    "border border-[#ffcc42]/50",
+                    "bg-[#ffcc42]/10",
+                    "px-3 py-2",
+                    "text-[11px] font-semibold",
+                    "text-[#ffcc42]",
+                    "transition",
+                    "hover:bg-[#ffcc42]",
+                    "hover:text-black",
+                    "disabled:cursor-not-allowed",
+                    "disabled:opacity-40",
+                  ].join(" ")}
                 >
                   Next
-                  <ChevronRight size={16} />
+                  <ChevronRight size={15} />
                 </button>
               </div>
             </nav>
           )}
 
-        {/* ================================================== */}
-        {/* BOTTOM CTA                                         */}
-        {/* ================================================== */}
+        {/* ================================================= */}
+        {/* BOTTOM CTA                                        */}
+        {/* ================================================= */}
 
-        <div className="mt-16 rounded-2xl border border-[#ffcc42]/15 bg-gradient-to-r from-[#1c1912] to-[#111115] px-5 py-9 text-center sm:px-8">
+        <div
+          className={[
+            "mt-12",
+            "rounded-2xl",
+            "border border-[#ffcc42]/15",
+            "bg-gradient-to-r",
+            "from-[#1c1912]",
+            "to-[#111115]",
+            "px-5 py-7",
+            "text-center",
+            "sm:px-8 sm:py-9",
+          ].join(" ")}
+        >
           <Crown
-            size={24}
+            size={21}
             className="mx-auto text-[#ffcc42]"
           />
 
-          <h3 className="mt-4 text-xl font-bold sm:text-2xl">
-            Join the PremiumChat Community
+          <h3 className="mt-3 text-lg font-bold sm:text-xl">
+            {isAuthenticated
+              ? "Ready to Connect?"
+              : "Join the PremiumChat Community"}
           </h3>
 
-          <p className="mx-auto mt-3 max-w-xl text-sm leading-7 text-zinc-400">
-            Create your account to connect with
-            verified creators through private
-            conversations.
+          <p className="mx-auto mt-2 max-w-lg text-[12px] leading-6 text-zinc-400 sm:text-[13px]">
+            {isAuthenticated
+              ? "Explore creator profiles and start a private conversation."
+              : "Create your account to connect with verified creators through private conversations."}
           </p>
 
           <Link
-            to="/register"
-            className="mt-6 inline-flex items-center justify-center rounded-lg bg-[#ffcc42] px-6 py-3 text-sm font-bold text-black transition hover:brightness-110"
+            to={isAuthenticated ? "/messages" : "/register"}
+            className={[
+              "mt-5 inline-flex",
+              "min-h-10",
+              "items-center justify-center gap-2",
+              "rounded-lg",
+              "bg-[#ffcc42]",
+              "px-5",
+              "text-[12px] font-bold",
+              "text-black",
+              "transition",
+              "hover:brightness-110",
+            ].join(" ")}
           >
-            Join PremiumChat
+            {isAuthenticated
+              ? "Open Messages"
+              : "Join PremiumChat"}
+
+            <ArrowRight size={15} />
           </Link>
         </div>
       </section>

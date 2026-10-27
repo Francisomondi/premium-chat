@@ -9,6 +9,7 @@ import {
 
 import {
   ArrowLeft,
+  ArrowRight,
   BadgeCheck,
   CalendarDays,
   Crown,
@@ -28,29 +29,63 @@ import {
 import { useAuthStore } from "../../store/useAuthStore.js";
 import { useChatStore } from "../../store/useChatStore.js";
 
+/**
+ * ============================================================
+ * PREMIUMCHAT — PUBLIC CREATOR PROFILE
+ * ============================================================
+ *
+ * UI CLEANUP 1.4
+ *
+ * Improvements:
+ * - Compact responsive layout
+ * - Smaller typography
+ * - Refined creator image
+ * - Cleaner verification badge
+ * - Compact profile information cards
+ * - Improved action buttons
+ * - Reduced unnecessary spacing
+ *
+ * Preserves:
+ * - Public creator profile API
+ * - AbortController cancellation
+ * - Loading and error states
+ * - Retry functionality
+ * - Authentication redirect
+ * - Start Chat integration
+ * - Conversation validation
+ * - Self-chat prevention
+ *
+ * No fictional creator statistics or biography.
+ */
+
+/**
+ * ============================================================
+ * LOADING SKELETON
+ * ============================================================
+ */
 
 function CreatorProfileSkeleton() {
   return (
     <div
       role="status"
       aria-label="Loading creator profile"
-      className="mx-auto max-w-6xl px-4 py-10 sm:px-6 lg:px-8"
+      className="mx-auto max-w-[1120px] px-4 py-8 sm:px-6 lg:px-8"
     >
-      <div className="mb-8 h-5 w-32 animate-pulse rounded bg-white/10" />
+      <div className="mb-6 h-4 w-28 animate-pulse rounded bg-white/10" />
 
-      <div className="grid gap-8 lg:grid-cols-[380px_minmax(0,1fr)]">
-        <div className="aspect-[3/4] animate-pulse rounded-3xl bg-[#202026]" />
+      <div className="grid gap-7 md:grid-cols-[300px_minmax(0,1fr)] lg:gap-10">
+        <div className="mx-auto aspect-[4/5] w-full max-w-[340px] animate-pulse rounded-2xl bg-[#202026] md:mx-0" />
 
-        <div className="space-y-6">
+        <div className="space-y-5">
           <div className="h-7 w-36 animate-pulse rounded-full bg-[#ffcc42]/10" />
 
-          <div className="h-12 w-3/4 animate-pulse rounded bg-white/10" />
+          <div className="h-9 w-3/4 animate-pulse rounded bg-white/10" />
 
-          <div className="h-5 w-1/2 animate-pulse rounded bg-white/10" />
+          <div className="h-4 w-1/2 animate-pulse rounded bg-white/10" />
 
-          <div className="h-28 animate-pulse rounded-2xl bg-white/5" />
+          <div className="h-20 animate-pulse rounded-xl bg-white/5" />
 
-          <div className="h-12 w-48 animate-pulse rounded-xl bg-[#ffcc42]/20" />
+          <div className="h-10 w-44 animate-pulse rounded-lg bg-[#ffcc42]/20" />
         </div>
       </div>
 
@@ -71,8 +106,7 @@ function CreatorProfileAvatar({
   avatarUrl,
   displayName,
 }) {
-  const [imageError, setImageError] =
-    useState(false);
+  const [imageError, setImageError] = useState(false);
 
   useEffect(() => {
     setImageError(false);
@@ -84,7 +118,19 @@ function CreatorProfileAvatar({
     !imageError;
 
   return (
-    <div className="relative aspect-[3/4] w-full overflow-hidden rounded-3xl border border-[#ffcc42]/20 bg-[#15151a] shadow-[0_20px_70px_rgba(0,0,0,0.35)]">
+    <div
+      className={[
+        "relative",
+        "mx-auto w-full max-w-[340px]",
+        "aspect-[4/5]",
+        "overflow-hidden",
+        "rounded-2xl",
+        "border border-[#ffcc42]/20",
+        "bg-[#15151a]",
+        "shadow-[0_15px_50px_rgba(0,0,0,0.3)]",
+        "md:mx-0",
+      ].join(" ")}
+    >
       {hasImage ? (
         <img
           src={avatarUrl}
@@ -93,31 +139,53 @@ function CreatorProfileAvatar({
           onError={() => setImageError(true)}
         />
       ) : (
-        <div className="flex h-full w-full flex-col items-center justify-center bg-gradient-to-br from-[#342915] via-[#1a1a20] to-[#09090c]">
-          <div className="flex h-28 w-28 items-center justify-center rounded-full border border-[#ffcc42]/25 bg-[#ffcc42]/10 sm:h-36 sm:w-36">
+        <div
+          className={[
+            "flex h-full w-full",
+            "flex-col items-center justify-center",
+            "bg-gradient-to-br",
+            "from-[#342915]",
+            "via-[#1a1a20]",
+            "to-[#09090c]",
+          ].join(" ")}
+        >
+          <div
+            className={[
+              "flex h-24 w-24",
+              "items-center justify-center",
+              "rounded-full",
+              "border border-[#ffcc42]/25",
+              "bg-[#ffcc42]/10",
+              "sm:h-28 sm:w-28",
+            ].join(" ")}
+          >
             <UserRound
-              size={64}
-              strokeWidth={1.1}
+              size={52}
+              strokeWidth={1.2}
               className="text-[#ffcc42]/70"
             />
           </div>
 
           <Crown
-            size={28}
-            className="mt-7 text-[#ffcc42]/40"
+            size={23}
+            className="mt-5 text-[#ffcc42]/40"
           />
         </div>
       )}
 
-      <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
+      {/* IMAGE GRADIENT */}
 
-      <div className="absolute bottom-5 left-5 right-5 flex items-center gap-2">
+      <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent" />
+
+      {/* IMAGE LABEL */}
+
+      <div className="absolute bottom-4 left-4 right-4 flex items-center gap-2">
         <Crown
-          size={18}
+          size={15}
           className="text-[#ffcc42]"
         />
 
-        <span className="text-xs font-semibold uppercase tracking-[0.2em] text-white">
+        <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white">
           PremiumChat Creator
         </span>
       </div>
@@ -136,41 +204,89 @@ function CreatorProfileError({
   onRetry,
 }) {
   return (
-    <div className="mx-auto flex min-h-[65vh] max-w-xl flex-col items-center justify-center px-4 text-center">
-      <div className="flex h-20 w-20 items-center justify-center rounded-full border border-red-500/20 bg-red-500/5">
+    <div className="mx-auto flex min-h-[60vh] max-w-lg flex-col items-center justify-center px-4 text-center">
+      <div className="flex h-14 w-14 items-center justify-center rounded-full border border-red-500/20 bg-red-500/5">
         <AlertCircle
-          size={36}
+          size={27}
           className="text-[#ffcc42]"
         />
       </div>
 
-      <h1 className="mt-6 text-2xl font-bold text-white">
+      <h1 className="mt-5 text-xl font-bold text-white sm:text-2xl">
         Creator Unavailable
       </h1>
 
-      <p className="mt-3 text-sm leading-7 text-zinc-400">
+      <p className="mt-3 text-[13px] leading-6 text-zinc-400">
         {message}
       </p>
 
-      <div className="mt-7 flex flex-wrap justify-center gap-3">
+      <div className="mt-6 flex flex-wrap justify-center gap-3">
         {typeof onRetry === "function" && (
           <button
             type="button"
             onClick={onRetry}
-            className="inline-flex items-center gap-2 rounded-xl border border-[#ffcc42]/40 px-5 py-3 text-sm font-semibold text-[#ffcc42] transition hover:bg-[#ffcc42]/10"
+            className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-[#ffcc42]/40 px-4 text-[12px] font-semibold text-[#ffcc42] transition hover:bg-[#ffcc42]/10"
           >
-            <RefreshCw size={17} />
+            <RefreshCw size={15} />
             Try Again
           </button>
         )}
 
         <Link
           to="/explore"
-          className="inline-flex items-center gap-2 rounded-xl bg-[#ffcc42] px-5 py-3 text-sm font-bold text-black transition hover:brightness-110"
+          className="inline-flex min-h-10 items-center gap-2 rounded-lg bg-[#ffcc42] px-4 text-[12px] font-bold text-black transition hover:brightness-110"
         >
-          <ArrowLeft size={17} />
+          <ArrowLeft size={15} />
           Explore Creators
         </Link>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * ============================================================
+ * PROFILE INFORMATION CARD
+ * ============================================================
+ */
+
+function ProfileInfoCard({
+  icon: Icon,
+  title,
+  description,
+}) {
+  return (
+    <div
+      className={[
+        "flex items-start gap-3",
+        "rounded-xl",
+        "border border-white/10",
+        "bg-[#15151a]",
+        "p-4",
+        "transition-colors",
+        "hover:border-[#ffcc42]/20",
+      ].join(" ")}
+    >
+      <div
+        className={[
+          "flex h-9 w-9 shrink-0",
+          "items-center justify-center",
+          "rounded-lg",
+          "bg-[#ffcc42]/10",
+          "text-[#ffcc42]",
+        ].join(" ")}
+      >
+        <Icon size={18} />
+      </div>
+
+      <div className="min-w-0">
+        <h3 className="text-[13px] font-semibold text-white">
+          {title}
+        </h3>
+
+        <p className="mt-1 text-[11px] leading-5 text-zinc-400">
+          {description}
+        </p>
       </div>
     </div>
   );
@@ -185,60 +301,83 @@ function CreatorProfileError({
 export default function CreatorProfilePage() {
   /**
    * ==========================================================
-   * ROUTE PARAMETERS
+   * ROUTING
    * ==========================================================
    */
 
   const { creatorId } = useParams();
 
   const navigate = useNavigate();
-const location = useLocation();
 
-const isAuthenticated = useAuthStore(
-  (state) => state.isAuthenticated
-);
-
-const currentUser = useAuthStore(
-  (state) => state.user
-);
-
-const openConversationWithCreator = useChatStore(
-  (state) => state.openConversationWithCreator
-);
-
-const [isStartingChat, setIsStartingChat] = useState(false);
-const [startChatError, setStartChatError] = useState(null);
-
-const startingChatRef = useRef(false);
-
-const currentUserId = String(
-  currentUser?._id ?? currentUser?.id ?? ""
-).toLowerCase();
-
-const isOwnProfile =
-  Boolean(currentUserId) &&
-  currentUserId === String(creatorId).toLowerCase();
+  const location = useLocation();
 
   /**
    * ==========================================================
-   * STATE
+   * AUTH STORE
    * ==========================================================
    */
 
-  const [creator, setCreator] =
-    useState(null);
+  const isAuthenticated = useAuthStore(
+    (state) => state.isAuthenticated
+  );
 
-  const [isLoading, setIsLoading] =
-    useState(true);
+  const currentUser = useAuthStore(
+    (state) => state.user
+  );
 
-  const [error, setError] =
-    useState(null);
+  /**
+   * ==========================================================
+   * CHAT STORE
+   * ==========================================================
+   */
 
-  const [isNotFound, setIsNotFound] =
+  const openConversationWithCreator = useChatStore(
+    (state) => state.openConversationWithCreator
+  );
+
+  /**
+   * ==========================================================
+   * CHAT STATE
+   * ==========================================================
+   */
+
+  const [isStartingChat, setIsStartingChat] =
     useState(false);
 
-  const [reloadKey, setReloadKey] =
-    useState(0);
+  const [startChatError, setStartChatError] =
+    useState(null);
+
+  const startingChatRef = useRef(false);
+
+  /**
+   * ==========================================================
+   * CURRENT USER
+   * ==========================================================
+   */
+
+  const currentUserId = String(
+    currentUser?._id ?? currentUser?.id ?? ""
+  ).toLowerCase();
+
+  const isOwnProfile =
+    Boolean(currentUserId) &&
+    currentUserId === String(creatorId).toLowerCase();
+
+  /**
+   * ==========================================================
+   * PROFILE STATE
+   * ==========================================================
+   */
+
+  const [creator, setCreator] = useState(null);
+
+  const [isLoading, setIsLoading] = useState(true);
+
+  const [error, setError] = useState(null);
+
+  const [isNotFound, setIsNotFound] = useState(false);
+
+  const [reloadKey, setReloadKey] = useState(0);
 
   /**
    * ==========================================================
@@ -247,23 +386,22 @@ const isOwnProfile =
    */
 
   useEffect(() => {
-    const controller =
-      new AbortController();
+    const controller = new AbortController();
 
     const fetchCreator = async () => {
       setIsLoading(true);
       setError(null);
       setIsNotFound(false);
       setCreator(null);
+      setStartChatError(null);
 
       try {
-        const response =
-          await getPublicCreatorProfile(
-            creatorId,
-            {
-              signal: controller.signal,
-            }
-          );
+        const response = await getPublicCreatorProfile(
+          creatorId,
+          {
+            signal: controller.signal,
+          }
+        );
 
         if (controller.signal.aborted) {
           return;
@@ -333,86 +471,96 @@ const isOwnProfile =
    */
 
   const handleRetry = () => {
-    setReloadKey(
-      (previous) => previous + 1
-    );
+    setReloadKey((previous) => previous + 1);
   };
+
+  /**
+   * ==========================================================
+   * START CHAT
+   * ==========================================================
+   *
+   * Preserve existing working conversation flow.
+   */
+
   const handleStartChat = async () => {
     if (startingChatRef.current) {
-        return;
+      return;
     }
 
     setStartChatError(null);
 
     if (!creator?.id || creator.id !== creatorId) {
-        setStartChatError("Invalid creator profile.");
-        return;
+      setStartChatError(
+        "Invalid creator profile."
+      );
+
+      return;
     }
 
     if (!isAuthenticated) {
-        navigate("/login", {
+      navigate("/login", {
         state: {
-            from: `${location.pathname}${location.search}`,
+          from: `${location.pathname}${location.search}`,
         },
-        });
+      });
 
-        return;
+      return;
     }
 
     if (isOwnProfile) {
-        setStartChatError(
+      setStartChatError(
         "You cannot start a conversation with yourself."
-        );
+      );
 
-        return;
+      return;
     }
 
     startingChatRef.current = true;
     setIsStartingChat(true);
 
     try {
-        const conversation =
+      const conversation =
         await openConversationWithCreator(creatorId);
 
-        const chatState = useChatStore.getState();
+      const chatState = useChatStore.getState();
 
-        const conversationId = String(
+      const conversationId = String(
         conversation?._id ?? conversation?.id ?? ""
-        ).toLowerCase();
+      ).toLowerCase();
 
-        const selectedId = String(
+      const selectedId = String(
         chatState.activeConversationId ?? ""
-        ).toLowerCase();
+      ).toLowerCase();
 
-        const loadedId = String(
+      const loadedId = String(
         chatState.activeConversation?._id ??
-        chatState.activeConversation?.id ??
-        ""
-        ).toLowerCase();
+          chatState.activeConversation?.id ??
+          ""
+      ).toLowerCase();
 
-        if (
+      if (
         !conversationId ||
         selectedId !== conversationId ||
         loadedId !== conversationId ||
         chatState.conversationError
-        ) {
+      ) {
         throw new Error(
-            chatState.conversationError ||
+          chatState.conversationError ||
             "Unable to open the conversation."
         );
-        }
+      }
 
-        navigate("/messages");
-    } catch (error) {
-        setStartChatError(
-        error?.message ||
-            "Unable to start chat. Please try again."
-        );
+      navigate("/messages");
+    } catch (chatError) {
+      setStartChatError(
+        chatError?.message ||
+          "Unable to start chat. Please try again."
+      );
     } finally {
-        startingChatRef.current = false;
-        setIsStartingChat(false);
+      startingChatRef.current = false;
+      setIsStartingChat(false);
     }
-    };
+  };
 
   /**
    * ==========================================================
@@ -468,92 +616,100 @@ const isOwnProfile =
     )
       ? new Date(
           creator.joinedAt
-        ).toLocaleDateString(
-          undefined,
-          {
-            month: "long",
-            year: "numeric",
-          }
-        )
+        ).toLocaleDateString(undefined, {
+          month: "long",
+          year: "numeric",
+        })
       : null;
 
   /**
    * ==========================================================
-   * RENDER PROFILE
+   * RENDER
    * ==========================================================
    */
 
   return (
-    <div className="min-h-screen bg-[#09090c] text-white">
-      {/* ==================================================== */}
-      {/* BACKGROUND                                           */}
-      {/* ==================================================== */}
+    <div className="relative min-h-screen overflow-hidden bg-[#09090c] text-white">
+      {/* BACKGROUND GLOW */}
 
-      <div className="pointer-events-none absolute left-1/2 top-20 h-96 w-96 -translate-x-1/2 rounded-full bg-[#ffcc42]/5 blur-[120px]" />
+      <div
+        aria-hidden="true"
+        className={[
+          "pointer-events-none absolute",
+          "left-1/2 top-12",
+          "h-72 w-72",
+          "-translate-x-1/2",
+          "rounded-full",
+          "bg-[#ffcc42]/5",
+          "blur-[100px]",
+        ].join(" ")}
+      />
 
-      <div className="relative mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-12 lg:px-8">
-        {/* ================================================== */}
-        {/* BACK NAVIGATION                                    */}
-        {/* ================================================== */}
+      <div className="relative mx-auto max-w-[1120px] px-4 py-7 sm:px-6 sm:py-9 lg:px-8">
+        {/* =============================================== */}
+        {/* BACK NAVIGATION                                 */}
+        {/* =============================================== */}
 
         <Link
           to="/explore"
-          className="mb-8 inline-flex items-center gap-2 text-sm font-medium text-zinc-400 transition hover:text-[#ffcc42]"
+          className="mb-6 inline-flex items-center gap-2 text-[12px] font-medium text-zinc-400 transition hover:text-[#ffcc42]"
         >
-          <ArrowLeft size={17} />
+          <ArrowLeft size={15} />
           Back to Explore
         </Link>
 
-        {/* ================================================== */}
-        {/* PROFILE LAYOUT                                     */}
-        {/* ================================================== */}
+        {/* =============================================== */}
+        {/* PROFILE LAYOUT                                  */}
+        {/* =============================================== */}
 
-        <div className="grid gap-8 lg:grid-cols-[380px_minmax(0,1fr)] lg:gap-12">
-          {/* ================================================ */}
-          {/* LEFT — CREATOR PHOTO                             */}
-          {/* ================================================ */}
+        <div className="grid items-start gap-7 md:grid-cols-[300px_minmax(0,1fr)] lg:gap-10">
+          {/* CREATOR IMAGE */}
 
-          <div>
-            <CreatorProfileAvatar
-              avatarUrl={creator.avatarUrl}
-              displayName={displayName}
-            />
-          </div>
+          <CreatorProfileAvatar
+            avatarUrl={creator.avatarUrl}
+            displayName={displayName}
+          />
 
-          {/* ================================================ */}
-          {/* RIGHT — CREATOR INFORMATION                      */}
-          {/* ================================================ */}
+          {/* CREATOR INFORMATION */}
 
-          <div className="flex flex-col justify-center">
+          <div className="min-w-0 py-1">
             {/* CREATOR LABEL */}
 
-            <div className="mb-5 inline-flex w-fit items-center gap-2 rounded-full border border-[#ffcc42]/25 bg-[#ffcc42]/10 px-4 py-2">
+            <div
+              className={[
+                "inline-flex items-center gap-2",
+                "rounded-full",
+                "border border-[#ffcc42]/25",
+                "bg-[#ffcc42]/10",
+                "px-3 py-1.5",
+              ].join(" ")}
+            >
               <Crown
-                size={15}
+                size={13}
                 className="text-[#ffcc42]"
               />
 
-              <span className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#ffcc42]">
+              <span className="text-[10px] font-bold uppercase tracking-[0.15em] text-[#ffcc42]">
                 PremiumChat Creator
               </span>
             </div>
 
-            {/* CREATOR NAME */}
+            {/* NAME */}
 
-            <h1 className="break-words text-4xl font-extrabold tracking-tight text-white sm:text-5xl">
+            <h1 className="mt-4 break-words text-[30px] font-extrabold leading-tight tracking-tight text-white sm:text-[36px] lg:text-[40px]">
               {displayName}
             </h1>
 
-            {/* VERIFICATION */}
+            {/* VERIFIED BADGE */}
 
             {creator.isVerified && (
-              <div className="mt-5 flex items-center gap-2">
+              <div className="mt-3 flex items-center gap-2">
                 <BadgeCheck
-                  size={20}
+                  size={17}
                   className="text-[#ffcc42]"
                 />
 
-                <span className="text-sm font-semibold text-[#ffcc42]">
+                <span className="text-[12px] font-semibold text-[#ffcc42]">
                   Verified Creator
                 </span>
               </div>
@@ -561,64 +717,35 @@ const isOwnProfile =
 
             {/* DESCRIPTION */}
 
-            <p className="mt-6 max-w-xl text-sm leading-8 text-zinc-400 sm:text-base">
+            <p className="mt-4 max-w-lg text-[13px] leading-6 text-zinc-400 sm:text-sm">
               Connect with {displayName} through
-              PremiumChat's private messaging
-              experience.
+              PremiumChat's private messaging experience.
             </p>
 
-            {/* PROFILE INFORMATION */}
+            {/* =========================================== */}
+            {/* PROFILE INFORMATION                         */}
+            {/* =========================================== */}
 
-            <div className="mt-8 grid gap-3 sm:grid-cols-2">
-              {/* VERIFIED ACCOUNT */}
+            <div className="mt-6 grid gap-3 sm:grid-cols-2">
+              <ProfileInfoCard
+                icon={ShieldCheck}
+                title="Approved Creator"
+                description="Public creator profile"
+              />
 
-              <div className="rounded-2xl border border-white/10 bg-[#15151a] p-5">
-                <div className="flex items-center gap-3">
-                  <ShieldCheck
-                    size={22}
-                    className="text-[#ffcc42]"
-                  />
-
-                  <div>
-                    <p className="text-sm font-semibold text-white">
-                      Verified Account
-                    </p>
-
-                    <p className="mt-1 text-xs text-zinc-400">
-                      Approved creator profile
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {/* PRIVATE MESSAGING */}
-
-              <div className="rounded-2xl border border-white/10 bg-[#15151a] p-5">
-                <div className="flex items-center gap-3">
-                  <LockKeyhole
-                    size={22}
-                    className="text-[#ffcc42]"
-                  />
-
-                  <div>
-                    <p className="text-sm font-semibold text-white">
-                      Private Messaging
-                    </p>
-
-                    <p className="mt-1 text-xs text-zinc-400">
-                      Connect through PremiumChat
-                    </p>
-                  </div>
-                </div>
-              </div>
+              <ProfileInfoCard
+                icon={LockKeyhole}
+                title="Private Messaging"
+                description="Connect through PremiumChat"
+              />
             </div>
 
             {/* JOINED DATE */}
 
             {joinedAt && (
-              <div className="mt-6 flex items-center gap-2 text-xs text-zinc-500">
+              <div className="mt-5 flex items-center gap-2 text-[11px] text-zinc-500">
                 <CalendarDays
-                  size={16}
+                  size={14}
                   className="text-[#ffcc42]"
                 />
 
@@ -628,98 +755,150 @@ const isOwnProfile =
               </div>
             )}
 
-            {/* ============================================== */}
-            {/* ACTION BUTTONS                                 */}
-            {/* ============================================== */}
+            {/* =========================================== */}
+            {/* ACTION BUTTONS                              */}
+            {/* =========================================== */}
 
-            <div className="mt-9 flex flex-col gap-3 sm:flex-row">
-              {/*
-                Start Chat will be connected to the
-                existing useChatStore in Step 4.2.5.4.
+            <div className="mt-7 flex flex-col gap-3 sm:flex-row">
+              {/* START CHAT */}
 
-                Keep disabled until the actual
-                conversation flow is implemented.
-              */}
+              <button
+                type="button"
+                onClick={handleStartChat}
+                disabled={isStartingChat || isOwnProfile}
+                aria-busy={isStartingChat}
+                className={[
+                  "inline-flex min-h-11",
+                  "items-center justify-center gap-2",
+                  "rounded-lg",
+                  "bg-[#ffcc42]",
+                  "px-5",
+                  "text-[12px] font-bold",
+                  "text-black",
+                  "transition",
+                  "hover:bg-[#ffd966]",
+                  "disabled:cursor-not-allowed",
+                  "disabled:opacity-50",
+                ].join(" ")}
+              >
+                {isStartingChat ? (
+                  <>
+                    <RefreshCw
+                      size={16}
+                      className="animate-spin"
+                    />
 
-            <button
-            type="button"
-            onClick={handleStartChat}
-            disabled={isStartingChat || isOwnProfile}
-            aria-busy={isStartingChat}
-            className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#ffcc42] px-7 py-3.5 text-sm font-bold text-black transition hover:bg-[#ffd966] disabled:cursor-not-allowed disabled:opacity-50"
-            >
-            {isStartingChat ? (
-                <>
-                <RefreshCw size={19} className="animate-spin" />
-                Opening Chat...
-                </>
-            ) : (
-                <>
-                <MessageCircle size={19} />
-                {isOwnProfile ? "Your Profile" : "Start Chat"}
-                </>
-            )}
-            </button>
+                    Opening Chat...
+                  </>
+                ) : (
+                  <>
+                    <MessageCircle size={16} />
+
+                    {isOwnProfile
+                      ? "Your Profile"
+                      : "Start Chat"}
+                  </>
+                )}
+              </button>
+
+              {/* EXPLORE MORE */}
 
               <Link
                 to="/explore"
-                className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/5 px-7 py-3.5 text-sm font-semibold text-white transition hover:border-[#ffcc42]/50 hover:text-[#ffcc42]"
+                className={[
+                  "inline-flex min-h-11",
+                  "items-center justify-center gap-2",
+                  "rounded-lg",
+                  "border border-white/15",
+                  "bg-white/5",
+                  "px-5",
+                  "text-[12px] font-semibold",
+                  "text-white",
+                  "transition",
+                  "hover:border-[#ffcc42]/50",
+                  "hover:text-[#ffcc42]",
+                ].join(" ")}
               >
-                <Users size={18} />
+                <Users size={16} />
 
-                Explore More Creators
+                Explore More
               </Link>
             </div>
+
+            {/* CHAT ERROR */}
+
             {startChatError && (
-            <div
+              <div
                 role="alert"
-                className="mt-4 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-300"
-            >
+                className="mt-4 rounded-lg border border-red-500/20 bg-red-500/10 px-4 py-3 text-[12px] leading-5 text-red-300"
+              >
                 {startChatError}
-            </div>
+              </div>
             )}
 
-            {/* COMING SOON MESSAGE */}
+            {/* ACCESS NOTICE */}
 
-            <div className="mt-6 flex items-start gap-2 text-xs leading-6 text-zinc-500">
-            <ShieldCheck
-                size={16}
-                className="mt-1 shrink-0 text-[#ffcc42]"
-            />
+            <div className="mt-5 flex items-start gap-2 text-[11px] leading-5 text-zinc-500">
+              <ShieldCheck
+                size={14}
+                className="mt-0.5 shrink-0 text-[#ffcc42]"
+              />
 
-            <span>
-                Private messaging is available to authenticated
-                PremiumChat members.
-            </span>
+              <span>
+                Private messaging is available to
+                authenticated PremiumChat members.
+              </span>
             </div>
           </div>
         </div>
 
-        {/* ================================================== */}
-        {/* BOTTOM CTA                                         */}
-        {/* ================================================== */}
+        {/* =============================================== */}
+        {/* BOTTOM CTA                                      */}
+        {/* =============================================== */}
 
-        <div className="mt-16 rounded-3xl border border-[#ffcc42]/15 bg-gradient-to-r from-[#1c1912] to-[#111115] px-6 py-10 text-center sm:px-10">
+        <div
+          className={[
+            "mt-12",
+            "rounded-2xl",
+            "border border-[#ffcc42]/15",
+            "bg-gradient-to-r",
+            "from-[#1c1912]",
+            "to-[#111115]",
+            "px-5 py-7",
+            "text-center",
+            "sm:px-8 sm:py-9",
+          ].join(" ")}
+        >
           <Crown
-            size={27}
+            size={21}
             className="mx-auto text-[#ffcc42]"
           />
 
-          <h2 className="mt-4 text-2xl font-bold text-white">
+          <h2 className="mt-3 text-lg font-bold text-white sm:text-xl">
             Discover More on PremiumChat
           </h2>
 
-          <p className="mx-auto mt-3 max-w-xl text-sm leading-7 text-zinc-400">
+          <p className="mx-auto mt-2 max-w-lg text-[12px] leading-6 text-zinc-400 sm:text-[13px]">
             Explore approved creators and discover
-            meaningful connections through
-            PremiumChat.
+            meaningful connections through PremiumChat.
           </p>
 
           <Link
             to="/explore"
-            className="mt-6 inline-flex items-center justify-center rounded-xl bg-[#ffcc42] px-6 py-3 text-sm font-bold text-black transition hover:brightness-110"
+            className={[
+              "mt-5 inline-flex min-h-10",
+              "items-center justify-center gap-2",
+              "rounded-lg",
+              "bg-[#ffcc42]",
+              "px-5",
+              "text-[12px] font-bold",
+              "text-black",
+              "transition",
+              "hover:brightness-110",
+            ].join(" ")}
           >
             Explore Creators
+            <ArrowRight size={15} />
           </Link>
         </div>
       </div>
