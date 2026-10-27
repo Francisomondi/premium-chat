@@ -15,6 +15,9 @@ import {
 import {
   verifyConversationMembership,
 } from "./conversation.service.js";
+import {
+  authorizeMessageSending,
+} from "./messagingAuthorization.service.js";
 
 import {
   verifyConversationAccess,
@@ -243,15 +246,16 @@ export const sendTextMessage = async ({
 
   /**
    * STEP 2:
-   * Verify conversation membership and status.
+   * Verify conversation membership and
+   * the server-controlled messaging policy.
    */
 
-  const conversation =
-   await verifyConversationAccess({
-      conversationId,
-      userId: senderId,
-      requireActive: true,
-   });
+  const {
+    conversation,
+  } = await authorizeMessageSending({
+    conversationId,
+    senderId,
+  });
 
   /**
    * STEP 3:

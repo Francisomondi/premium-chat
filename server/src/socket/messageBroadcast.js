@@ -12,24 +12,38 @@ import {
 
 /**
  * ============================================================
- * PREMIUMCHAT — SECURE MESSAGE BROADCAST
+ * FORMAT MESSAGE FOR SOCKET DELIVERY
  * ============================================================
  *
- * Every socket is revalidated before receiving
- * sensitive conversation messages.
+ * SECURITY:
  *
- * Unauthorized sockets are removed from rooms.
+ * - Explicitly allowlist public message fields.
+ * - Never expose private media storage URLs.
+ * - Never expose payment entitlement details.
+ * - Never expose internal account information.
+ * - Reject unsupported message types until
+ *   their serializers are implemented.
+ *
+ * Currently supports TEXT messages only.
  */
 
-/**
- * Format a saved message for delivery.
- */
 export const formatMessageForSocket = (
   message
 ) => {
   if (!message) {
     throw new TypeError(
       "A saved message is required."
+    );
+  }
+
+  /**
+   * Media delivery requires a dedicated
+   * authorization-aware serializer.
+   */
+
+  if (message.type !== "TEXT") {
+    throw new TypeError(
+      "Socket serialization for media messages is not available yet."
     );
   }
 
@@ -45,7 +59,7 @@ export const formatMessageForSocket = (
     clientMessageId:
       message.clientMessageId,
 
-    type: message.type,
+    type: "TEXT",
 
     content: message.content,
 

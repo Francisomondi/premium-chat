@@ -12,6 +12,19 @@ import conversationRoutes from "./routes/conversation.routes.js";
 
 import creatorMonetizationRoutes from "./routes/creatorMonetization.routes.js";
 
+import creatorSubscriptionPlanRoutes from "./routes/creatorSubscriptionPlan.routes.js";
+
+import publicCreatorSubscriptionPlanRoutes from "./routes/publicCreatorSubscriptionPlan.routes.js";
+/**
+ * ============================================================
+ * MODULE 4.3.5 — SUBSCRIBER SUBSCRIPTION MANAGEMENT
+ * ============================================================
+ */
+
+import subscriberSubscriptionRoutes from "./routes/subscriberSubscription.routes.js";
+
+import creatorSubscriberRoutes from "./routes/creatorSubscriber.routes.js";
+
 import { env } from "./config/env.js";
 
 import {
@@ -114,7 +127,10 @@ app.use(hpp());
  * ============================================================
  */
 
-app.use(env.API_PREFIX, globalApiLimiter);
+app.use(
+  env.API_PREFIX,
+  globalApiLimiter
+);
 
 /*
  * ============================================================
@@ -157,9 +173,6 @@ app.use(
  * ============================================================
  * CREATOR APPLICATION ROUTES
  * ============================================================
- *
- * POST /api/creator/applications
- * GET  /api/creator/applications/me
  */
 
 app.use(
@@ -193,8 +206,6 @@ app.use(
  * ============================================================
  * CREATOR DISCOVERY ROUTES
  * ============================================================
- *
- * Preserving the existing route registration.
  */
 
 app.use(
@@ -209,19 +220,88 @@ app.use(
  *
  * GET   /api/creator/monetization
  * PATCH /api/creator/monetization
- *
- * Protected by:
- *
- * - requireAuth
- * - requireCreator
- *
- * Only approved, age-verified creators
- * can access these endpoints.
  */
 
 app.use(
   `${env.API_PREFIX}/creator`,
   creatorMonetizationRoutes
+);
+
+/*
+ * ============================================================
+ * PRIVATE CREATOR SUBSCRIPTION PLAN ROUTES
+ * ============================================================
+ *
+ * POST  /api/creator/subscription-plans
+ * GET   /api/creator/subscription-plans
+ * PATCH /api/creator/subscription-plans/:planId
+ * PATCH /api/creator/subscription-plans/:planId/status
+ */
+
+app.use(
+  `${env.API_PREFIX}/creator/subscription-plans`,
+  creatorSubscriptionPlanRoutes
+);
+
+/*
+ * ============================================================
+ * PUBLIC CREATOR SUBSCRIPTION PLAN ROUTES
+ * ============================================================
+ *
+ * GET /api/creators/:creatorId/subscription-plans
+ */
+
+app.use(
+  `${env.API_PREFIX}/creators`,
+  publicCreatorSubscriptionPlanRoutes
+);
+/**
+ * ============================================================
+ * MODULE 4.3.5 — SUBSCRIBER SUBSCRIPTION ROUTES
+ * ============================================================
+ *
+ * Base path:
+ *
+ * /api/subscriptions
+ *
+ * Endpoints:
+ *
+ * POST  /api/subscriptions
+ * GET   /api/subscriptions/me
+ * GET   /api/subscriptions/access/:creatorId
+ * PATCH /api/subscriptions/:subscriptionId/cancel
+ *
+ * Authentication is enforced inside the router.
+ */
+
+app.use(
+  `${env.API_PREFIX}/subscriptions`,
+  subscriberSubscriptionRoutes
+);
+
+/**
+ * ============================================================
+ * MODULE 4.3.5 — CREATOR SUBSCRIBER MANAGEMENT
+ * ============================================================
+ *
+ * Base path:
+ *
+ * /api/creator/subscribers
+ *
+ * Endpoint:
+ *
+ * GET /api/creator/subscribers
+ *
+ * Security:
+ *
+ * - Authentication required.
+ * - Approved creator authorization required.
+ * - Creator identity comes from req.auth.userId.
+ */
+
+app.use(
+  `${env.API_PREFIX}/creator/subscribers`,
+  creatorSubscriberRoutes
 );
 
 /*
