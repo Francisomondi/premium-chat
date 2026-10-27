@@ -756,8 +756,8 @@ export const getCreatorSubscribers =
  * - Cancel immediately.
  *
  * ACTIVE:
- * - Disable renewal.
- * - Preserve current paid period.
+ * - Disable automatic renewal.
+ * - Preserve the existing paid period.
  *
  * PAST_DUE:
  * - Disable renewal.
@@ -769,70 +769,257 @@ export const getCreatorSubscribers =
  *
  * CANCELED / EXPIRED:
  * - Return existing terminal state.
+ *
+ * SECURITY:
+ *
+ * - Only the subscription owner can cancel.
+ * - Never activate or renew subscriptions.
+ * - Never extend billing periods.
+ * - Never overwrite a concurrent status change.
+ *
+ * Uses atomic conditional updates.
  */
 
-export const cancelMySubscription =
-  async (
-    subscriberId,
-    subscriptionId
-  ) => {
-    const subscription =
-      await getOwnedSubscription(
-        subscriberId,
-        subscriptionId
-      );
+/**
+ * ============================================================
+ * MODULE 4.3.5.7.5 — ATOMIC CANCELLATION
+ * ============================================================
+ */
 
-    const now = new Date();
+export const cancelMySubscription = async (
+  subscriberId,
+  subscriptionId
+) => {
+  /**
+   * STEP 1:
+   * Validate ownership and retrieve
+   * the current subscription.
+   */
 
-    if (
-      subscription.status ===
+  const subscription =
+    await getOwnedSubscription(
+      subscriberId,
+      subscriptionId
+    );
+
+  /**
+   * STEP 2:
+   * Handle terminal subscriptions.
+   */
+
+  if (
+    subscription.status ===
       SUBSCRIPTION_STATUSES.CANCELED ||
-      subscription.status ===
+    subscription.status ===
       SUBSCRIPTION_STATUSES.EXPIRED
-    ) {
-      return subscription;
-    }
+  ) {
+    return subscription;
+  }
 
-    /**
-     * Pending subscriptions can be
-     * canceled immediately.
-     */
+  const now = new Date();
 
-    if (
-      subscription.status ===
-      SUBSCRIPTION_STATUSES.PENDING
-    ) {
-      subscription.status =
-        SUBSCRIPTION_STATUSES.CANCELED;
+  /**
+   * STEP 3:
+   * Cancel pending subscriptions immediately.
+   *
+   * A pending subscription has no
+   * verified paid period to preserve.
+   */
 
-      subscription.canceledAt = now;
+  if (
+    subscription.status ===
+    SUBSCRIPTION_STATUSES.PENDING
+  ) {
+    const canceled =
+      await SubscriberSubscription.findOneAndUpdate(
+        {
+          _id: subscriptionId,
 
-      subscription.autoRenew = false;
+          subscriberId,
 
-      subscription.cancelAtPeriodEnd = false;
-    } else {
-      /**
-       * Preserve paid access until the
-       * current paid period ends.
-       */
+          status:
+            SUBSCRIPTION_STATUSES.PENDING,
 
-      subscription.autoRenew = false;
+          /**
+           * Prevent overwriting a concurrent
+           * modification of this subscription.
+           */
+          __v: subscription.__v,
+        },
+        {
+          $set: {
+            status:
+              SUBSCRIPTION_STATUSES.CANCELED,
 
-      subscription.cancelAtPeriodEnd = true;
+            canceledAt: now,
 
-      subscription.canceledAt ??= now;
-    }
+            autoRenew: false,
 
-    try {
-      await subscription.save();
+            cancelAtPeriodEnd: false,
+          },
 
-      return subscription;
-    } catch (error) {
-      handleSubscriptionDatabaseError(
-        error
+          $inc: {
+            __v: 1,
+          },
+        },
+        {
+          new: true,
+
+          runValidators: true,
+        }
+      );
+
+    if (!canceled) {
+      throw new AppError(
+        "Subscription state changed. Refresh and try again.",
+        409,
+        "SUBSCRIPTION_UPDATE_CONFLICT"
       );
     }
-  };
+
+    return canceled;
+  }
+
+  /**
+   * STEP 4:
+   * Validate cancellable subscription states.
+   *
+   * ACTIVE:
+   * Preserve the current paid period.
+   *
+   * PAST_DUE:
+   * Do not restore premium access.
+   *
+   * SUSPENDED:
+   * Preserve the administrative suspension.
+   */
+
+  const cancellableStatuses = [
+    SUBSCRIPTION_STATUSES.ACTIVE,
+    SUBSCRIPTION_STATUSES.PAST_DUE,
+    SUBSCRIPTION_STATUSES.SUSPENDED,
+  ];
+
+  if (
+    !cancellableStatuses.includes(
+      subscription.status
+    )
+  ) {
+    throw new AppError(
+      "This subscription cannot be canceled in its current state.",
+      409,
+      "INVALID_SUBSCRIPTION_STATE"
+    );
+  }
+
+  /**
+   * STEP 5:
+   * Atomically schedule cancellation.
+   *
+   * This operation:
+   *
+   * - Disables automatic renewal.
+   * - Schedules cancellation at period end.
+   * - Preserves the first cancellation timestamp.
+   * - Increments the document version.
+   * - Prevents overwriting concurrent changes.
+   *
+   * MongoDB aggregation pipeline updates
+   * are used to preserve canceledAt
+   * without requiring a second database update.
+   */
+
+  const updated =
+    await SubscriberSubscription.findOneAndUpdate(
+      {
+        _id: subscriptionId,
+
+        subscriberId,
+
+        status: subscription.status,
+
+        /**
+         * Optimistic concurrency check.
+         *
+         * The update succeeds only when
+         * the document version still matches
+         * the version originally retrieved.
+         */
+        __v: subscription.__v,
+      },
+      [
+        {
+          $set: {
+            autoRenew: false,
+
+            cancelAtPeriodEnd: true,
+
+            /**
+             * Preserve the original
+             * cancellation timestamp.
+             *
+             * Set the timestamp only when
+             * canceledAt is null or missing.
+             */
+            canceledAt: {
+              $ifNull: [
+                "$canceledAt",
+                now,
+              ],
+            },
+
+            /**
+             * Increment the document version.
+             *
+             * Pipeline updates require an
+             * explicit version increment.
+             */
+            __v: {
+              $add: [
+                {
+                  $ifNull: [
+                    "$__v",
+                    0,
+                  ],
+                },
+                1,
+              ],
+            },
+          },
+        },
+      ],
+      {
+        new: true,
+      }
+    );
+
+  /**
+   * STEP 6:
+   * Handle concurrent modifications.
+   *
+   * A null result means the subscription
+   * no longer matches the expected state
+   * or version.
+   */
+
+  if (!updated) {
+    throw new AppError(
+      "Subscription state changed. Refresh and try again.",
+      409,
+      "SUBSCRIPTION_UPDATE_CONFLICT"
+    );
+  }
+
+  /**
+   * STEP 7:
+   * Return the updated subscription.
+   *
+   * No additional database update
+   * is necessary.
+   */
+
+  return updated;
+};
 
 /**
  * ============================================================
@@ -878,6 +1065,10 @@ export const expireSubscriptions =
     }
 
     /**
+     * ========================================================
+     * FIND EXPIRED SUBSCRIPTIONS
+     * ========================================================
+     *
      * Only subscriptions whose paid
      * period has actually ended
      * are eligible.
@@ -903,6 +1094,12 @@ export const expireSubscriptions =
         .select("_id");
 
     let expiredCount = 0;
+
+    /**
+     * ========================================================
+     * PROCESS EXPIRATION
+     * ========================================================
+     */
 
     for (const candidate of candidates) {
       /**
@@ -938,6 +1135,18 @@ export const expireSubscriptions =
 
               cancelAtPeriodEnd: false,
             },
+
+            /**
+             * Maintain the document version
+             * when expiration changes state.
+             *
+             * This keeps expiration compatible
+             * with optimistic concurrency checks
+             * used by cancellation.
+             */
+            $inc: {
+              __v: 1,
+            },
           },
           {
             runValidators: true,
@@ -948,8 +1157,15 @@ export const expireSubscriptions =
         result.modifiedCount;
     }
 
+    /**
+     * ========================================================
+     * RETURN EXPIRATION RESULTS
+     * ========================================================
+     */
+
     return {
       expiredCount,
+
       checkedCount:
         candidates.length,
     };
@@ -961,19 +1177,18 @@ export const expireSubscriptions =
  * ============================================================
  *
  * This function evaluates whether a subscriber
- * currently has paid access to a creator.
+ * currently has an ACTIVE subscription
+ * within its paid billing period.
  *
  * IMPORTANT:
  *
- * This assumes ACTIVE status was assigned
- * only after verified payment.
+ * This is a subscription-state check.
  *
- * Future modules must also validate:
+ * It does not independently verify payment.
  *
- * - Payment reversals
- * - Creator eligibility
- * - Content-specific restrictions
- * - Administrative revocations
+ * Final premium-content authorization must use
+ * the dedicated subscription authorization service,
+ * including trusted payment verification.
  */
 
 export const checkSubscriberEntitlement =
@@ -992,6 +1207,12 @@ export const checkSubscriberEntitlement =
     );
 
     const now = new Date();
+
+    /**
+     * ========================================================
+     * FIND ACTIVE SUBSCRIPTION
+     * ========================================================
+     */
 
     const subscription =
       await SubscriberSubscription.findOne({
@@ -1023,8 +1244,9 @@ export const checkSubscriberEntitlement =
     }
 
     /**
-     * Defense-in-depth:
-     * validate model entitlement.
+     * ========================================================
+     * VALIDATE MODEL ENTITLEMENT
+     * ========================================================
      */
 
     if (
@@ -1037,6 +1259,16 @@ export const checkSubscriberEntitlement =
         subscription: null,
       };
     }
+
+    /**
+     * ========================================================
+     * RETURN SUBSCRIPTION STATE
+     * ========================================================
+     *
+     * Payment verification must still
+     * occur before protected content
+     * access is granted.
+     */
 
     return {
       hasAccess: true,

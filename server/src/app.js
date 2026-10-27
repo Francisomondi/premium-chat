@@ -24,6 +24,8 @@ import publicCreatorSubscriptionPlanRoutes from "./routes/publicCreatorSubscript
 import subscriberSubscriptionRoutes from "./routes/subscriberSubscription.routes.js";
 
 import creatorSubscriberRoutes from "./routes/creatorSubscriber.routes.js";
+import mpesaPaymentRoutes from "./routes/mpesaPayment.routes.js";
+import mpesaCallbackRoutes from "./routes/mpesaCallback.routes.js";
 
 import { env } from "./config/env.js";
 
@@ -213,95 +215,45 @@ app.use(
   creatorDiscoveryRoutes
 );
 
-/*
- * ============================================================
- * CREATOR MONETIZATION ROUTES
- * ============================================================
- *
- * GET   /api/creator/monetization
- * PATCH /api/creator/monetization
- */
+
 
 app.use(
   `${env.API_PREFIX}/creator`,
   creatorMonetizationRoutes
 );
 
-/*
- * ============================================================
- * PRIVATE CREATOR SUBSCRIPTION PLAN ROUTES
- * ============================================================
- *
- * POST  /api/creator/subscription-plans
- * GET   /api/creator/subscription-plans
- * PATCH /api/creator/subscription-plans/:planId
- * PATCH /api/creator/subscription-plans/:planId/status
- */
+
 
 app.use(
   `${env.API_PREFIX}/creator/subscription-plans`,
   creatorSubscriptionPlanRoutes
 );
 
-/*
- * ============================================================
- * PUBLIC CREATOR SUBSCRIPTION PLAN ROUTES
- * ============================================================
- *
- * GET /api/creators/:creatorId/subscription-plans
- */
+
 
 app.use(
   `${env.API_PREFIX}/creators`,
   publicCreatorSubscriptionPlanRoutes
 );
-/**
- * ============================================================
- * MODULE 4.3.5 — SUBSCRIBER SUBSCRIPTION ROUTES
- * ============================================================
- *
- * Base path:
- *
- * /api/subscriptions
- *
- * Endpoints:
- *
- * POST  /api/subscriptions
- * GET   /api/subscriptions/me
- * GET   /api/subscriptions/access/:creatorId
- * PATCH /api/subscriptions/:subscriptionId/cancel
- *
- * Authentication is enforced inside the router.
- */
+
 
 app.use(
   `${env.API_PREFIX}/subscriptions`,
   subscriberSubscriptionRoutes
 );
 
-/**
- * ============================================================
- * MODULE 4.3.5 — CREATOR SUBSCRIBER MANAGEMENT
- * ============================================================
- *
- * Base path:
- *
- * /api/creator/subscribers
- *
- * Endpoint:
- *
- * GET /api/creator/subscribers
- *
- * Security:
- *
- * - Authentication required.
- * - Approved creator authorization required.
- * - Creator identity comes from req.auth.userId.
- */
+
 
 app.use(
   `${env.API_PREFIX}/creator/subscribers`,
   creatorSubscriberRoutes
+);
+
+
+
+app.use(
+  `${env.API_PREFIX}/payments/mpesa`,
+  mpesaPaymentRoutes
 );
 
 /*
@@ -316,6 +268,23 @@ if (!env.IS_PRODUCTION) {
     securityTestRoutes
   );
 }
+
+/**
+ * ============================================================
+ * MODULE 4.3.5.7.8.13.11 — M-PESA CALLBACKS
+ * ============================================================
+ *
+ * POST /api/payments/mpesa/callback
+ *
+ * Public provider callback.
+ *
+ * Does not grant subscription access.
+ */
+
+app.use(
+  `${env.API_PREFIX}/payments/mpesa`,
+  mpesaCallbackRoutes
+);
 
 /*
  * ============================================================

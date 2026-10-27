@@ -299,6 +299,36 @@ const subscriberSubscriptionSchema =
       },
 
       /**
+     * Original UTC calendar day used for
+     * monthly renewal calculations.
+     *
+     * Set only by the trusted payment
+     * application workflow.
+     */
+
+    billingAnchorDay: {
+    type: Number,
+
+    min: 1,
+
+    max: 31,
+
+    default: null,
+
+    validate: {
+        validator(value) {
+        return (
+            value == null ||
+            Number.isInteger(value)
+        );
+        },
+
+        message:
+        "Billing anchor day must be an integer.",
+    },
+    },
+
+      /**
        * Idempotency reference for the
        * initial subscription request.
        *
