@@ -6,6 +6,10 @@ import MpesaCallbackEvent, {
   MPESA_CALLBACK_EVENT_STATUSES,
 } from "../models/MpesaCallbackEvent.model.js";
 
+import MpesaPaymentEvidence, {
+  MPESA_EVIDENCE_STATUSES,
+} from "../models/MpesaPaymentEvidence.model.js";
+
 import {
   PAYMENT_PROVIDERS,
   PAYMENT_STATUSES,
@@ -15,32 +19,40 @@ import {
   queryMpesaStkStatus,
 } from "../payments/mpesa/mpesa.client.js";
 
+import {
+  evaluateMpesaEvidence,
+} from "./mpesaEvidence.service.js";
+
 import AppError from "../utils/AppError.js";
 
 /**
  * ============================================================
- * PREMIUMCHAT — M-PESA RECONCILIATION SERVICE
+ * PREMIUMCHAT — HARDENED M-PESA RECONCILIATION
  * ============================================================
  *
- * Responsibilities:
- *
- * - Load the original payment attempt.
- * - Query Safaricom directly.
- * - Match CheckoutRequestID.
- * - Match MerchantRequestID when returned.
- * - Track reconciliation progress.
+ * MODULE 4.3.5.7.8.13.13
  *
  * SECURITY:
  *
- * - Never trust callback status alone.
- * - Never activate subscriptions.
- * - Never mark payment VERIFIED here.
- * - Never mark payment SUCCEEDED here.
+ * - Only server-to-server provider queries
+ *   can establish provider-query outcomes.
+ *
+ * - Callback claims are compared, not trusted.
+ *
+ * - Payment success is never assigned here.
+ *
+ * - Financial verification remains disabled.
+ *
+ * - Subscription activation remains disabled.
  */
 
 const isValidId = (value) =>
   typeof value === "string" &&
   mongoose.isObjectIdOrHexString(value);
+
+const validString = (value) =>
+  typeof value === "string" &&
+  value.trim().length > 0;
 
 /**
  * ============================================================
@@ -52,6 +64,11 @@ export const reconcileMpesaPayment =
   async ({
     paymentId,
   } = {}) => {
+    /**
+     * STEP 1:
+     * Validate payment identifier.
+     */
+
     if (!isValidId(paymentId)) {
       throw new AppError(
         "Invalid payment identifier.",
@@ -59,6 +76,11 @@ export const reconcileMpesaPayment =
         "INVALID_PAYMENT_ID"
       );
     }
+
+    /**
+     * STEP 2:
+     * Load payment.
+     */
 
     const payment =
       await PaymentTransaction.findById(
@@ -73,6 +95,11 @@ export const reconcileMpesaPayment =
       );
     }
 
+    /**
+     * STEP 3:
+     * Validate provider.
+     */
+
     if (
       payment.provider !==
       PAYMENT_PROVIDERS.MPESA
@@ -84,6 +111,12 @@ export const reconcileMpesaPayment =
       );
     }
 
+    /**
+     * STEP 4:
+     * Do not reconcile terminal payments
+     * through this pending-payment workflow.
+     */
+
     if (
       ![
         PAYMENT_STATUSES.PENDING,
@@ -92,70 +125,44 @@ export const reconcileMpesaPayment =
     ) {
       return {
         checked: false,
-
-        reason:
-          "PAYMENT_NOT_PENDING",
+        reason: "PAYMENT_NOT_PENDING",
+        paymentVerified: false,
+        entitlementApplied: false,
       };
     }
 
+    /**
+     * STEP 5:
+     * Require original provider identifiers.
+     */
+
     if (
-      !payment.providerTransactionId ||
-      !payment.merchantRequestId
+      !validString(
+        payment.providerTransactionId
+      ) ||
+      !validString(
+        payment.merchantRequestId
+      )
     ) {
       return {
         checked: false,
-
-        reason:
-          "PROVIDER_IDENTIFIERS_MISSING",
+        reason: "PROVIDER_IDENTIFIERS_MISSING",
+        paymentVerified: false,
+        entitlementApplied: false,
       };
     }
 
-    const result =
-      await queryMpesaStkStatus({
-        checkoutRequestId:
-          payment.providerTransactionId,
-      });
-
     /**
-     * Verify checkout identity.
+     * STEP 6:
+     * Load the callback, if available.
+     *
+     * A callback is not required to query
+     * the provider.
      */
 
-    if (
-      result.checkoutRequestId !==
-      payment.providerTransactionId
-    ) {
-      throw new AppError(
-        "CheckoutRequestID mismatch.",
-        409,
-        "MPESA_CHECKOUT_MISMATCH"
-      );
-    }
-
-    /**
-     * Verify MerchantRequestID when
-     * Safaricom returns it.
-     */
-
-    if (
-      result.merchantRequestId &&
-      result.merchantRequestId !==
-        payment.merchantRequestId
-    ) {
-      throw new AppError(
-        "MerchantRequestID mismatch.",
-        409,
-        "MPESA_MERCHANT_REQUEST_MISMATCH"
-      );
-    }
-
-    /**
-     * Find stored callback event.
-     */
-
-    const event =
+    const callbackEvent =
       await MpesaCallbackEvent.findOne({
-        paymentId:
-          payment._id,
+        paymentId: payment._id,
 
         checkoutRequestId:
           payment.providerTransactionId,
@@ -165,68 +172,103 @@ export const reconcileMpesaPayment =
       });
 
     /**
-     * Determine whether the provider
-     * reports successful payment.
+     * STEP 7:
+     * Query Safaricom directly.
      *
-     * This is not final entitlement approval.
+     * Errors propagate to the worker.
+     * Do not manufacture a failure result
+     * when the provider is unavailable.
      */
 
-    const providerReportsSuccess =
-      result.providerReportsSuccess;
+    const queryResult =
+      await queryMpesaStkStatus({
+        checkoutRequestId:
+          payment.providerTransactionId,
+      });
 
     /**
-     * Detect disagreement between
-     * callback and query results.
+     * STEP 8:
+     * Evaluate the provider evidence.
      */
 
-    const callbackReportsSuccess =
-      event?.resultCode === 0;
-
-    const hasCallbackConflict =
-      Boolean(event) &&
-      result.resultCode !== null &&
-      callbackReportsSuccess !==
-        providerReportsSuccess;
+    const evaluation =
+      evaluateMpesaEvidence({
+        payment,
+        queryResult,
+        callbackEvent,
+      });
 
     /**
-     * Update event reconciliation state.
+     * STEP 9:
+     * Persist a bounded evidence summary.
      *
-     * Do not mark RECONCILED when evidence
-     * is contradictory or incomplete.
+     * No raw provider payloads or credentials
+     * are stored.
      */
 
-    if (event) {
-      await MpesaCallbackEvent.updateOne(
-        {
-          _id: event._id,
-        },
-        {
-          $set: {
-            status:
-              hasCallbackConflict
-                ? MPESA_CALLBACK_EVENT_STATUSES.UNRESOLVED
-                : MPESA_CALLBACK_EVENT_STATUSES.RECONCILED,
+    const queriedAt = new Date();
 
-            reconciliationAttemptedAt:
-              new Date(),
+    const evidence =
+      await MpesaPaymentEvidence.create({
+        paymentId: payment._id,
 
-            reconciledAt:
-              hasCallbackConflict
-                ? null
-                : new Date(),
+        checkoutRequestId:
+          payment.providerTransactionId,
 
-            lastErrorCode:
-              hasCallbackConflict
-                ? "PROVIDER_CALLBACK_CONFLICT"
-                : null,
-          },
+        merchantRequestId:
+          payment.merchantRequestId,
 
-          $inc: {
-            __v: 1,
-          },
-        }
-      );
+        source: "DARAJA_STK_QUERY",
+
+        status:
+          evaluation.status,
+
+        responseCode:
+          queryResult.responseCode == null
+            ? null
+            : String(queryResult.responseCode),
+
+        resultCode:
+          queryResult.resultCode == null
+            ? null
+            : String(queryResult.resultCode),
+
+        queriedAt,
+
+        financialDetailsVerified: false,
+
+        entitlementAuthorized: false,
+      });
+
+    /**
+     * STEP 10:
+     * Update callback reconciliation state.
+     *
+     * A matching query outcome does not
+     * establish full financial verification.
+     */
+
+    if (callbackEvent) {
+      const isConflict =
+        evaluation.status ===
+        MPESA_EVIDENCE_STATUSES.CONFLICT;
+
+      const isInconclusive =
+        evaluation.status ===
+        MPESA_EVIDENCE_STATUSES.QUERY_INCONCLUSIVE;
+
+      const unresolved =
+        isConflict || isInconclusive;
+
+
     }
+
+    /**
+     * STEP 11:
+     * Return reconciliation outcome.
+     *
+     * The result is informational.
+     */
 
     return {
       checked: true,
@@ -234,30 +276,27 @@ export const reconcileMpesaPayment =
       paymentId:
         payment._id.toString(),
 
+      evidenceId:
+        evidence._id.toString(),
+
       checkoutRequestId:
         payment.providerTransactionId,
 
-      providerReportsSuccess,
+      providerReportsSuccess:
+        evaluation.providerReportsSuccess,
 
-      callbackReportsSuccess:
-        event
-          ? callbackReportsSuccess
-          : null,
+      evidenceStatus:
+        evaluation.status,
 
-      hasCallbackConflict,
+      reason:
+        evaluation.reason,
 
-      resultCode:
-        result.resultCode,
-
-      /**
-       * Payment status remains unchanged.
-       */
+      financialDetailsVerified: false,
 
       paymentVerified: false,
 
       entitlementApplied: false,
 
-      requiresFurtherVerification:
-        providerReportsSuccess,
+      subscriptionActivated: false,
     };
   };

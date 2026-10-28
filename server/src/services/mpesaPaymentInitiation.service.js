@@ -9,6 +9,16 @@ import SubscriberSubscription, {
 import PaymentTransaction from "../models/PaymentTransaction.model.js";
 
 import {
+  authorizePaymentDispatch,
+  markPaymentDispatchStarted,
+  recordPaymentDispatchOutcome,
+} from "./paymentDispatchCoordination.service.js";
+
+import {
+  DISPATCH_STATES,
+} from "../models/PaymentDispatchCoordination.model.js";
+
+import {
   PAYMENT_PURPOSES,
   PAYMENT_PROVIDERS,
   PAYMENT_STATUSES,
@@ -23,6 +33,10 @@ import {
 } from "../payments/mpesa/mpesa.client.js";
 
 import {
+  fingerprintMpesaPhone,
+} from "../payments/mpesa/mpesa.fingerprint.js";
+
+import {
   getMpesaConfig,
 } from "../payments/mpesa/mpesa.config.js";
 
@@ -33,27 +47,44 @@ import AppError from "../utils/AppError.js";
  * PREMIUMCHAT — M-PESA PAYMENT INITIATION SERVICE
  * ============================================================
  *
- * Module 4.3.5.7.8.13.10
+ * Module 4.3.5.7.8.13.16
+ *
+ * FEATURES:
+ *
+ * - Subscriber eligibility validation
+ * - Subscription ownership validation
+ * - Server-controlled payment amount
+ * - KES currency enforcement
+ * - Phone normalization
+ * - Secure HMAC phone fingerprinting
+ * - Phone-bound idempotency
+ * - Duplicate payment prevention
+ * - Atomic payment dispatch authorization
+ * - Cancellation coordination
+ * - M-Pesa STK Push initiation
+ * - Provider acceptance validation
+ * - Provider identifier persistence
+ * - Unknown outcome handling
+ * - Dispatch outcome recording
  *
  * SECURITY:
  *
- * - Subscriber identity comes from authentication.
- * - Amount comes from the subscription snapshot.
- * - Currency must be KES.
- * - Subscription must be PENDING.
- * - No payment confirmation is accepted here.
- * - No subscription activation occurs here.
+ * - Never trust client-provided payment amounts.
+ * - Never store plaintext payment phone numbers.
+ * - Never automatically retry uncertain STK Push requests.
+ * - Never treat STK acceptance as financial verification.
+ * - Never activate subscriptions in this service.
  *
  * IMPORTANT:
  *
- * A durable database-level reservation is required
- * to prevent competing requests from initiating
- * multiple payments for one subscription.
+ * Cancellation coordination requires all pending
+ * subscription cancellation paths to participate
+ * in the same database coordination protocol.
  */
 
 /**
  * ============================================================
- * VALIDATION
+ * VALIDATION HELPERS
  * ============================================================
  */
 
@@ -75,6 +106,12 @@ const validateClientRequestId = (value) => {
     );
   }
 };
+
+/**
+ * ============================================================
+ * VALIDATE SUBSCRIPTION
+ * ============================================================
+ */
 
 const validateSubscription = (
   subscription,
@@ -138,7 +175,7 @@ const validateSubscription = (
 
 /**
  * ============================================================
- * FORMAT RESPONSE
+ * FORMAT PAYMENT RESPONSE
  * ============================================================
  */
 
@@ -162,10 +199,6 @@ const formatPaymentResult = (payment) => ({
   checkoutRequestId:
     payment.providerTransactionId || null,
 
-  /**
-   * This endpoint never confirms payment.
-   */
-
   paymentVerified: false,
 
   subscriptionActivated: false,
@@ -173,7 +206,161 @@ const formatPaymentResult = (payment) => ({
 
 /**
  * ============================================================
- * INITIATE SUBSCRIPTION PAYMENT
+ * VALIDATE IDEMPOTENCY REPLAY
+ * ============================================================
+ */
+
+const validateIdempotencyReplay = ({
+  existingPayment,
+  subscriptionId,
+  amountMinor,
+  paymentPhoneFingerprint,
+}) => {
+  const isSameRequest =
+    existingPayment.subscriptionId?.toString() ===
+      subscriptionId &&
+    existingPayment.provider ===
+      PAYMENT_PROVIDERS.MPESA &&
+    existingPayment.purpose ===
+      PAYMENT_PURPOSES.SUBSCRIPTION_INITIAL &&
+    existingPayment.amountMinor ===
+      amountMinor &&
+    existingPayment.currency === "KES" &&
+    existingPayment.paymentPhoneFingerprint ===
+      paymentPhoneFingerprint;
+
+  if (!isSameRequest) {
+    throw new AppError(
+      "Payment request identifier is already associated with another request.",
+      409,
+      "PAYMENT_REQUEST_CONFLICT"
+    );
+  }
+
+  return {
+    created: false,
+
+    payment:
+      formatPaymentResult(existingPayment),
+  };
+};
+
+/**
+ * ============================================================
+ * MARK INITIATION OUTCOME UNKNOWN
+ * ============================================================
+ */
+
+const markInitiationOutcomeUnknown = async ({
+  paymentId,
+  errorCode = "PROVIDER_OUTCOME_UNKNOWN",
+}) => {
+  await PaymentTransaction.updateOne(
+    {
+      _id: paymentId,
+
+      initiationStatus:
+        PAYMENT_INITIATION_STATUSES.DISPATCHING,
+    },
+    {
+      $set: {
+        initiationStatus:
+          PAYMENT_INITIATION_STATUSES.UNKNOWN,
+
+        initiationErrorCode:
+          errorCode,
+      },
+
+      $inc: {
+        __v: 1,
+      },
+    }
+  );
+};
+
+/**
+ * ============================================================
+ * RECORD DISPATCH OUTCOME SAFELY
+ * ============================================================
+ *
+ * Coordination recording must not trigger
+ * another STK Push.
+ *
+ * If recording fails, log the error and
+ * leave the payment available for reconciliation.
+ */
+
+const recordDispatchOutcomeSafely = async ({
+  paymentId,
+  state,
+}) => {
+  try {
+    const result =
+      await recordPaymentDispatchOutcome({
+        paymentId,
+        state,
+      });
+
+    if (!result) {
+      console.error(
+        "[PaymentDispatch] Outcome not recorded:",
+        paymentId.toString(),
+        state
+      );
+    }
+
+    return result;
+  } catch (error) {
+    console.error(
+      "[PaymentDispatch] Failed to record outcome:",
+      paymentId.toString(),
+      state,
+      error?.message
+    );
+
+    return null;
+  }
+};
+
+/**
+ * ============================================================
+ * HANDLE UNKNOWN INITIATION
+ * ============================================================
+ */
+
+const handleUnknownInitiation = async ({
+  paymentId,
+  errorCode,
+  message,
+}) => {
+  try {
+    await markInitiationOutcomeUnknown({
+      paymentId,
+      errorCode,
+    });
+  } catch (error) {
+    console.error(
+      "[MPesa] Failed to persist UNKNOWN initiation:",
+      paymentId.toString(),
+      error?.message
+    );
+  }
+
+  await recordDispatchOutcomeSafely({
+    paymentId,
+    state: DISPATCH_STATES.UNKNOWN,
+  });
+
+  throw new AppError(
+    message,
+    503,
+    "MPESA_INITIATION_OUTCOME_UNKNOWN"
+  );
+};
+
+/**
+ * ============================================================
+ * INITIATE SUBSCRIPTION M-PESA PAYMENT
  * ============================================================
  */
 
@@ -185,8 +372,9 @@ export const initiateSubscriptionMpesaPayment =
     clientRequestId,
   } = {}) => {
     /**
-     * STEP 1:
-     * Validate request.
+     * ========================================================
+     * STEP 1 — VALIDATE REQUEST IDENTIFIERS
+     * ========================================================
      */
 
     if (!isValidId(subscriberId)) {
@@ -205,9 +393,13 @@ export const initiateSubscriptionMpesaPayment =
       );
     }
 
-    validateClientRequestId(
-      clientRequestId
-    );
+    validateClientRequestId(clientRequestId);
+
+    /**
+     * ========================================================
+     * STEP 2 — NORMALIZE PHONE NUMBER
+     * ========================================================
+     */
 
     let normalizedPhone;
 
@@ -223,8 +415,18 @@ export const initiateSubscriptionMpesaPayment =
     }
 
     /**
-     * STEP 2:
-     * Verify payments are enabled.
+     * ========================================================
+     * STEP 3 — GENERATE PHONE FINGERPRINT
+     * ========================================================
+     */
+
+    const paymentPhoneFingerprint =
+      fingerprintMpesaPhone(normalizedPhone);
+
+    /**
+     * ========================================================
+     * STEP 4 — VERIFY PAYMENT FEATURE FLAG
+     * ========================================================
      */
 
     const config = getMpesaConfig();
@@ -238,8 +440,9 @@ export const initiateSubscriptionMpesaPayment =
     }
 
     /**
-     * STEP 3:
-     * Validate subscriber.
+     * ========================================================
+     * STEP 5 — VALIDATE SUBSCRIBER
+     * ========================================================
      */
 
     const subscriber =
@@ -258,8 +461,9 @@ export const initiateSubscriptionMpesaPayment =
     }
 
     /**
-     * STEP 4:
-     * Load and validate subscription.
+     * ========================================================
+     * STEP 6 — LOAD SUBSCRIPTION
+     * ========================================================
      */
 
     const subscription =
@@ -275,11 +479,9 @@ export const initiateSubscriptionMpesaPayment =
       );
 
     /**
-     * STEP 5:
-     * Enforce request idempotency.
-     *
-     * A repeated request identifier must not
-     * create another payment attempt.
+     * ========================================================
+     * STEP 7 — ENFORCE IDEMPOTENCY
+     * ========================================================
      */
 
     const existingByRequest =
@@ -289,44 +491,22 @@ export const initiateSubscriptionMpesaPayment =
       });
 
     if (existingByRequest) {
-      if (
-        existingByRequest.subscriptionId?.toString() !==
-          subscriptionId ||
-        existingByRequest.provider !==
-          PAYMENT_PROVIDERS.MPESA ||
-        existingByRequest.purpose !==
-          PAYMENT_PURPOSES.SUBSCRIPTION_INITIAL ||
-        existingByRequest.amountMinor !==
-          amountMinor ||
-        existingByRequest.currency !== "KES"
-      ) {
-        throw new AppError(
-          "Payment request identifier is already associated with another request.",
-          409,
-          "PAYMENT_REQUEST_CONFLICT"
-        );
-      }
+      return validateIdempotencyReplay({
+        existingPayment:
+          existingByRequest,
 
-      return {
-        created: false,
+        subscriptionId,
 
-        payment:
-          formatPaymentResult(existingByRequest),
-      };
+        amountMinor,
+
+        paymentPhoneFingerprint,
+      });
     }
 
     /**
-     * STEP 6:
-     * Prevent overlapping attempts.
-     *
-     * IMPORTANT:
-     *
-     * This preflight query improves behavior,
-     * but it is NOT a concurrency guarantee.
-     *
-     * A unique partial index is required
-     * before this service can be safely
-     * enabled for concurrent production traffic.
+     * ========================================================
+     * STEP 8 — PREVENT OVERLAPPING PAYMENTS
+     * ========================================================
      */
 
     const existingOpenPayment =
@@ -356,8 +536,9 @@ export const initiateSubscriptionMpesaPayment =
     }
 
     /**
-     * STEP 7:
-     * Reserve payment attempt.
+     * ========================================================
+     * STEP 9 — RESERVE PAYMENT
+     * ========================================================
      */
 
     let payment;
@@ -385,6 +566,8 @@ export const initiateSubscriptionMpesaPayment =
 
           clientRequestId,
 
+          paymentPhoneFingerprint,
+
           status:
             PAYMENT_STATUSES.PENDING,
 
@@ -396,10 +579,29 @@ export const initiateSubscriptionMpesaPayment =
         });
     } catch (error) {
       if (error?.code === 11000) {
+        const concurrentPayment =
+          await PaymentTransaction.findOne({
+            payerId: subscriberId,
+            clientRequestId,
+          });
+
+        if (concurrentPayment) {
+          return validateIdempotencyReplay({
+            existingPayment:
+              concurrentPayment,
+
+            subscriptionId,
+
+            amountMinor,
+
+            paymentPhoneFingerprint,
+          });
+        }
+
         throw new AppError(
-          "A payment request already exists. Retrieve its status before retrying.",
+          "A payment attempt already exists for this subscription.",
           409,
-          "PAYMENT_REQUEST_CONFLICT"
+          "PAYMENT_ALREADY_IN_PROGRESS"
         );
       }
 
@@ -407,59 +609,39 @@ export const initiateSubscriptionMpesaPayment =
     }
 
     /**
-     * STEP 8:
-     * Atomically claim the attempt.
+     * ========================================================
+     * STEP 10 — AUTHORIZE PAYMENT DISPATCH
+     * ========================================================
      *
-     * Only the request that successfully
-     * changes RESERVED -> DISPATCHING
-     * may contact Daraja.
+     * Authorization and payment claiming
+     * are coordinated through MongoDB.
      */
 
-    const claimed =
-      await PaymentTransaction.findOneAndUpdate(
-        {
-          _id: payment._id,
+    await authorizePaymentDispatch({
+      paymentId: payment._id,
 
-          status:
-            PAYMENT_STATUSES.PENDING,
+      subscriptionId:
+        subscription._id,
 
-          initiationStatus:
-            PAYMENT_INITIATION_STATUSES.RESERVED,
-        },
-        {
-          $set: {
-            status:
-              PAYMENT_STATUSES.PROCESSING,
-
-            initiationStatus:
-              PAYMENT_INITIATION_STATUSES.DISPATCHING,
-
-            initiationClaimedAt:
-              new Date(),
-          },
-
-          $inc: {
-            __v: 1,
-          },
-        },
-        {
-          new: true,
-        }
-      );
-
-    if (!claimed) {
-      throw new AppError(
-        "Payment initiation is already being processed.",
-        409,
-        "PAYMENT_INITIATION_CONFLICT"
-      );
-    }
+      subscriberId,
+    });
 
     /**
-     * STEP 9:
-     * Initiate STK Push.
+     * ========================================================
+     * STEP 11 — MARK DISPATCH STARTED
+     * ========================================================
      *
-     * The payment document already exists.
+     * This must succeed before contacting Daraja.
+     */
+
+    await markPaymentDispatchStarted({
+      paymentId: payment._id,
+    });
+
+    /**
+     * ========================================================
+     * STEP 12 — INITIATE M-PESA STK PUSH
+     * ========================================================
      */
 
     let providerResponse;
@@ -477,86 +659,206 @@ export const initiateSubscriptionMpesaPayment =
               .toString()
               .slice(-12),
         });
-    } catch (error) {
-      /**
-       * The request may have reached Daraja.
-       *
-       * Do not automatically create another
-       * payment or retry the STK Push.
-       */
+    } catch {
+      await handleUnknownInitiation({
+        paymentId:
+          payment._id,
 
-      await PaymentTransaction.updateOne(
-        {
-          _id: payment._id,
+        errorCode:
+          "PROVIDER_OUTCOME_UNKNOWN",
 
-          initiationStatus:
-            PAYMENT_INITIATION_STATUSES.DISPATCHING,
-        },
-        {
-          $set: {
-            initiationStatus:
-              PAYMENT_INITIATION_STATUSES.UNKNOWN,
-
-            initiationErrorCode:
-              "PROVIDER_OUTCOME_UNKNOWN",
-          },
-
-          $inc: {
-            __v: 1,
-          },
-        }
-      );
-
-      throw new AppError(
-        "The payment request outcome is uncertain. Check its status before trying again.",
-        503,
-        "MPESA_INITIATION_OUTCOME_UNKNOWN"
-      );
+        message:
+          "The payment request outcome is uncertain. Check its status before trying again.",
+      });
     }
 
     /**
-     * STEP 10:
-     * Store provider identifiers.
-     *
-     * This is not payment verification.
+     * ========================================================
+     * STEP 13 — VALIDATE PROVIDER ACCEPTANCE
+     * ========================================================
      */
 
-    const updated =
-      await PaymentTransaction.findOneAndUpdate(
-        {
-          _id: payment._id,
+    const providerAccepted =
+      providerResponse?.accepted === true;
 
-          initiationStatus:
-            PAYMENT_INITIATION_STATUSES.DISPATCHING,
-        },
-        {
-          $set: {
+    const validCheckoutRequestId =
+      typeof providerResponse?.checkoutRequestId ===
+        "string" &&
+      providerResponse.checkoutRequestId.trim().length > 0;
+
+    const validMerchantRequestId =
+      typeof providerResponse?.merchantRequestId ===
+        "string" &&
+      providerResponse.merchantRequestId.trim().length > 0;
+
+    /**
+     * ========================================================
+     * STEP 14 — HANDLE PROVIDER REJECTION
+     * ========================================================
+     */
+
+    if (!providerAccepted) {
+      /*
+       * Only an explicit, authoritative provider
+       * rejection may be marked REJECTED.
+       *
+       * Other outcomes remain UNKNOWN.
+       */
+
+      const explicitlyRejected =
+        providerResponse?.accepted === false &&
+        providerResponse?.rejectionConfirmed === true;
+
+      if (explicitlyRejected) {
+        try {
+          await PaymentTransaction.updateOne(
+            {
+              _id:
+                payment._id,
+
+              initiationStatus:
+                PAYMENT_INITIATION_STATUSES.DISPATCHING,
+            },
+            {
+              $set: {
+                initiationStatus:
+                  PAYMENT_INITIATION_STATUSES.REJECTED,
+
+                initiationErrorCode:
+                  "PROVIDER_INITIATION_REJECTED",
+              },
+
+              $inc: {
+                __v: 1,
+              },
+            }
+          );
+        } catch (error) {
+          console.error(
+            "[MPesa] Failed to persist rejection:",
+            payment._id.toString(),
+            error?.message
+          );
+        }
+
+        await recordDispatchOutcomeSafely({
+          paymentId:
+            payment._id,
+
+          state:
+            DISPATCH_STATES.REJECTED,
+        });
+
+        throw new AppError(
+          "M-Pesa rejected the payment initiation request.",
+          502,
+          "MPESA_INITIATION_REJECTED"
+        );
+      }
+
+      await handleUnknownInitiation({
+        paymentId:
+          payment._id,
+
+        errorCode:
+          "PROVIDER_ACCEPTANCE_UNCONFIRMED",
+
+        message:
+          "M-Pesa payment initiation could not be confirmed. Reconciliation is required.",
+      });
+    }
+
+    /**
+     * ========================================================
+     * STEP 15 — VALIDATE PROVIDER IDENTIFIERS
+     * ========================================================
+     */
+
+    if (
+      !validCheckoutRequestId ||
+      !validMerchantRequestId
+    ) {
+      await handleUnknownInitiation({
+        paymentId:
+          payment._id,
+
+        errorCode:
+          "PROVIDER_IDENTIFIERS_MISSING",
+
+        message:
+          "M-Pesa accepted the request but returned incomplete identifiers. Reconciliation is required.",
+      });
+    }
+
+    /**
+     * ========================================================
+     * STEP 16 — PERSIST PROVIDER IDENTIFIERS
+     * ========================================================
+     */
+
+    let updated;
+
+    try {
+      updated =
+        await PaymentTransaction.findOneAndUpdate(
+          {
+            _id:
+              payment._id,
+
             initiationStatus:
-              PAYMENT_INITIATION_STATUSES.ACCEPTED,
-
-            initiationAcceptedAt:
-              new Date(),
-
-            providerTransactionId:
-              providerResponse.checkoutRequestId,
-
-            merchantRequestId:
-              providerResponse.merchantRequestId,
+              PAYMENT_INITIATION_STATUSES.DISPATCHING,
 
             status:
               PAYMENT_STATUSES.PROCESSING,
           },
+          {
+            $set: {
+              initiationStatus:
+                PAYMENT_INITIATION_STATUSES.ACCEPTED,
 
-          $inc: {
-            __v: 1,
+              initiationAcceptedAt:
+                new Date(),
+
+              providerTransactionId:
+                providerResponse.checkoutRequestId.trim(),
+
+              merchantRequestId:
+                providerResponse.merchantRequestId.trim(),
+
+              initiationErrorCode:
+                null,
+            },
+
+            $inc: {
+              __v: 1,
+            },
           },
-        },
-        {
-          new: true,
-        }
-      );
+          {
+            new: true,
+          }
+        );
+    } catch {
+      await handleUnknownInitiation({
+        paymentId:
+          payment._id,
+
+        errorCode:
+          "PROVIDER_IDENTIFIERS_PERSISTENCE_FAILED",
+
+        message:
+          "Payment initiation was accepted but its identifiers could not be safely stored. Reconciliation is required.",
+      });
+    }
 
     if (!updated) {
+      await recordDispatchOutcomeSafely({
+        paymentId:
+          payment._id,
+
+        state:
+          DISPATCH_STATES.UNKNOWN,
+      });
+
       throw new AppError(
         "Payment initiation state changed unexpectedly. Reconciliation is required.",
         409,
@@ -565,10 +867,28 @@ export const initiateSubscriptionMpesaPayment =
     }
 
     /**
-     * STEP 11:
-     * Return payment initiation details.
+     * ========================================================
+     * STEP 17 — RECORD ACCEPTED DISPATCH
+     * ========================================================
      *
-     * No subscription activation occurs.
+     * ACCEPTED means Safaricom accepted
+     * the STK Push initiation.
+     *
+     * It does not mean payment succeeded.
+     */
+
+    await recordDispatchOutcomeSafely({
+      paymentId:
+        payment._id,
+
+      state:
+        DISPATCH_STATES.ACCEPTED,
+    });
+
+    /**
+     * ========================================================
+     * STEP 18 — RETURN RESULT
+     * ========================================================
      */
 
     return {

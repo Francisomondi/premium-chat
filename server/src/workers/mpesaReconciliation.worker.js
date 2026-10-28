@@ -1,8 +1,13 @@
 import mongoose from "mongoose";
 
-import MpesaCallbackEvent, {
-  MPESA_CALLBACK_EVENT_STATUSES,
-} from "../models/MpesaCallbackEvent.model.js";
+import {
+  randomUUID,
+} from "node:crypto";
+
+import {
+  claimNextMpesaReconciliationEvent,
+  finalizeMpesaReconciliationEvent,
+} from "../services/mpesaReconciliationQueue.service.js";
 
 import {
   reconcileMpesaPayment,
@@ -10,126 +15,126 @@ import {
 
 /**
  * ============================================================
- * PREMIUMCHAT — M-PESA RECONCILIATION WORKER
+ * PREMIUMCHAT — DURABLE M-PESA RECONCILIATION WORKER
  * ============================================================
  *
- * Standalone worker.
+ * Module 4.3.5.7.8.13.14
  *
- * No Express server.
- * No Socket.IO server.
- * No in-process setInterval.
+ * - Atomic event claims.
+ * - Expiring leases.
+ * - Exponential retry backoff.
+ * - Manual-review escalation.
  *
- * Run using an external scheduler.
+ * Does not:
+ *
+ * - Initiate STK Push.
+ * - Mark payments successful.
+ * - Activate subscriptions.
  */
 
-const BATCH_SIZE = 50;
+const MAX_EVENTS_PER_RUN = 100;
 
-const MAX_BATCHES = 10;
+const MAX_RUNTIME_MS =
+  4 * 60 * 1000;
 
-const MAX_RUNTIME_MS = 4 * 60 * 1000;
+const workerId =
+  `mpesa-${randomUUID()}`;
 
 const runReconciliation = async () => {
-  const startedAt = Date.now();
+  const startedAt =
+    Date.now();
 
-  let checkedCount = 0;
+  let processed = 0;
 
-  let failedCount = 0;
+  let failed = 0;
 
-  for (
-    let batch = 0;
-    batch < MAX_BATCHES;
-    batch++
-  ) {
-    if (
-      Date.now() - startedAt >
+  let manualReview = 0;
+
+  while (
+    processed < MAX_EVENTS_PER_RUN &&
+    Date.now() - startedAt <
       MAX_RUNTIME_MS
-    ) {
+  ) {
+    const event =
+      await claimNextMpesaReconciliationEvent({
+        workerId,
+      });
+
+    if (!event) {
       break;
     }
 
-    const events =
-      await MpesaCallbackEvent.find({
-        status: {
-          $in: [
-            MPESA_CALLBACK_EVENT_STATUSES.RECEIVED,
-            MPESA_CALLBACK_EVENT_STATUSES.UNRESOLVED,
-          ],
-        },
-      })
-        .sort({
-          receivedAt: 1,
-        })
-        .limit(BATCH_SIZE)
-        .lean();
+    let result;
 
-    if (events.length === 0) {
-      break;
-    }
-
-    for (const event of events) {
-      if (
-        Date.now() - startedAt >
-        MAX_RUNTIME_MS
-      ) {
-        break;
-      }
-
+    try {
       if (!event.paymentId) {
-        failedCount++;
-
-        continue;
+        result = {
+          checked: false,
+          reason: "PAYMENT_ID_MISSING",
+        };
+      } else {
+        result =
+          await reconcileMpesaPayment({
+            paymentId:
+              event.paymentId.toString(),
+          });
       }
+    } catch (error) {
+      failed++;
 
-      try {
-        await reconcileMpesaPayment({
-          paymentId:
-            event.paymentId.toString(),
-        });
+      result = {
+        checked: false,
+        reason:
+          "RECONCILIATION_EXECUTION_FAILED",
+      };
 
-        checkedCount++;
-      } catch (error) {
-        failedCount++;
+      console.error(
+        JSON.stringify({
+          event:
+            "MPESA_RECONCILIATION_ERROR",
 
-        console.error(
-          JSON.stringify({
-            event:
-              "MPESA_RECONCILIATION_FAILED",
+          callbackEventId:
+            event._id.toString(),
 
-            callbackEventId:
-              event._id.toString(),
-
-            error:
-              error.message,
-          })
-        );
-      }
+          error:
+            error.message,
+        })
+      );
     }
 
-    if (events.length < BATCH_SIZE) {
-      break;
+    const finalization =
+      await finalizeMpesaReconciliationEvent({
+        event,
+        result,
+      });
+
+    if (
+      finalization.status ===
+      "MANUAL_REVIEW"
+    ) {
+      manualReview++;
     }
+
+    processed++;
   }
 
   return {
-    checkedCount,
-
-    failedCount,
+    processed,
+    failed,
+    manualReview,
   };
 };
 
 const main = async () => {
   try {
-    const databaseUrl =
-      process.env.MONGODB_URI;
-
-    if (!databaseUrl) {
+    if (!process.env.MONGODB_URI) {
       throw new Error(
         "MONGODB_URI is required."
       );
     }
 
     await mongoose.connect(
-      databaseUrl
+      process.env.MONGODB_URI
     );
 
     const result =

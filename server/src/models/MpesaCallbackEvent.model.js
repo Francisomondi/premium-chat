@@ -25,15 +25,26 @@ import mongoose from "mongoose";
 
 const { Schema } = mongoose;
 
+/**
+ * ============================================================
+ * MODULE 4.3.5.7.8.13.14
+ * CALLBACK RECONCILIATION STATUSES
+ * ============================================================
+ */
+
 export const MPESA_CALLBACK_EVENT_STATUSES =
   Object.freeze({
     RECEIVED: "RECEIVED",
 
     PROCESSING: "PROCESSING",
 
+    RETRY_SCHEDULED: "RETRY_SCHEDULED",
+
     RECONCILED: "RECONCILED",
 
     UNRESOLVED: "UNRESOLVED",
+
+    MANUAL_REVIEW: "MANUAL_REVIEW",
   });
 
 const mpesaCallbackEventSchema = new Schema(
@@ -46,6 +57,81 @@ const mpesaCallbackEventSchema = new Schema(
       default: null,
 
       index: true,
+    },
+    /**
+     * ============================================================
+     * RECONCILIATION RETRY MANAGEMENT
+     * ============================================================
+     */
+
+    attemptCount: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    nextAttemptAt: {
+      type: Date,
+      default: Date.now,
+    },
+
+    /**
+     * Worker lease.
+     *
+     * Only the worker holding the current
+     * lease token may finalize an attempt.
+     */
+
+    leaseOwner: {
+      type: String,
+      default: null,
+      maxlength: 100,
+    },
+
+    leaseExpiresAt: {
+      type: Date,
+      default: null,
+    },
+
+    /**
+     * Conflict tracking.
+     */
+
+    hasConflict: {
+      type: Boolean,
+      default: false,
+    },
+
+    conflictCount: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    lastConflictAt: {
+      type: Date,
+      default: null,
+    },
+
+    lastConflictReason: {
+      type: String,
+      default: null,
+      maxlength: 100,
+    },
+
+    /**
+     * Manual-review tracking.
+     */
+
+    manualReviewRequiredAt: {
+      type: Date,
+      default: null,
+    },
+
+    manualReviewReason: {
+      type: String,
+      default: null,
+      maxlength: 100,
     },
 
     checkoutRequestId: {
@@ -176,6 +262,23 @@ mpesaCallbackEventSchema.index(
   },
   {
     name: "mpesa_callback_worker_lookup",
+  }
+);
+
+/**
+ * ============================================================
+ * DURABLE RECONCILIATION QUEUE INDEX
+ * ============================================================
+ */
+
+mpesaCallbackEventSchema.index(
+  {
+    status: 1,
+    nextAttemptAt: 1,
+    leaseExpiresAt: 1,
+  },
+  {
+    name: "mpesa_reconciliation_due_lookup",
   }
 );
 

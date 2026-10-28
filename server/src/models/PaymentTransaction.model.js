@@ -325,6 +325,20 @@ const paymentTransactionSchema = new Schema(
 
       default: null,
     },
+
+    /**
+ * HMAC fingerprint of the normalized
+ * M-Pesa payment phone number.
+ *
+ * Never use this field as proof of payment.
+ */
+
+paymentPhoneFingerprint: {
+  type: String,
+  default: null,
+  immutable: true,
+  match: /^[a-f0-9]{64}$/,
+},
     /**
  * ============================================================
  * PROVIDER INITIATION TRACKING

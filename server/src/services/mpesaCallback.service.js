@@ -1,10 +1,18 @@
 import PaymentTransaction from "../models/PaymentTransaction.model.js";
 
-import MpesaCallbackEvent from "../models/MpesaCallbackEvent.model.js";
+import MpesaCallbackEvent, {
+  MPESA_CALLBACK_EVENT_STATUSES,
+} from "../models/MpesaCallbackEvent.model.js";
+
+import MpesaCallbackConflict from "../models/MpesaCallbackConflict.model.js";
 
 import {
   PAYMENT_PROVIDERS,
 } from "../constants/payment.constants.js";
+
+import {
+  quarantineMpesaCallback,
+} from "./mpesaCallbackQuarantine.service.js";
 
 import {
   parseMpesaStkCallback,
@@ -12,25 +20,17 @@ import {
 
 /**
  * ============================================================
- * PREMIUMCHAT — M-PESA CALLBACK SERVICE
+ * PREMIUMCHAT — HARDENED M-PESA CALLBACK INGESTION
  * ============================================================
  *
- * Responsibilities:
- *
- * - Parse callback data.
- * - Match provider transaction identifiers.
- * - Persist callback events.
- * - Handle duplicate delivery.
- *
- * SECURITY:
- *
- * - Never mark payment successful here.
- * - Never activate subscriptions here.
- * - Never trust callback-reported amounts.
- * - Never expose payment ownership details.
+ * - Idempotent first delivery.
+ * - Duplicate callback comparison.
+ * - Conflict recording.
+ * - No payment verification.
+ * - No subscription activation.
  */
 
-const normalizeReportedAmount = (value) => {
+const normalizeAmount = (value) => {
   if (
     typeof value !== "number" ||
     !Number.isFinite(value) ||
@@ -39,18 +39,50 @@ const normalizeReportedAmount = (value) => {
     return null;
   }
 
-  const minor = value * 100;
+  const amountMinor = value * 100;
 
-  if (!Number.isSafeInteger(minor)) {
-    return null;
-  }
-
-  return minor;
+  return Number.isSafeInteger(amountMinor)
+    ? amountMinor
+    : null;
 };
 
 /**
  * ============================================================
- * PROCESS CALLBACK
+ * COMPARE CALLBACK
+ * ============================================================
+ */
+
+const detectConflict = (
+  existing,
+  incoming
+) => {
+  if (
+    existing.resultCode !==
+    incoming.resultCode
+  ) {
+    return "RESULT_CODE_MISMATCH";
+  }
+
+  if (
+    existing.reportedAmountMinor !==
+    incoming.reportedAmountMinor
+  ) {
+    return "AMOUNT_MISMATCH";
+  }
+
+  if (
+    existing.reportedReceipt !==
+    incoming.reportedReceipt
+  ) {
+    return "RECEIPT_MISMATCH";
+  }
+
+  return null;
+};
+
+/**
+ * ============================================================
+ * INGEST CALLBACK
  * ============================================================
  */
 
@@ -59,10 +91,6 @@ export const ingestMpesaCallback =
     const callback =
       parseMpesaStkCallback(payload);
 
-    /**
-     * Match the checkout request.
-     */
-
     const payment =
       await PaymentTransaction.findOne({
         provider:
@@ -70,92 +98,171 @@ export const ingestMpesaCallback =
 
         providerTransactionId:
           callback.checkoutRequestId,
-      });
-
-    /**
-     * Unknown callbacks are not allowed
-     * to modify payment records.
-     */
-
-    if (!payment) {
-      return {
-        accepted: false,
-
-        reason:
-          "UNKNOWN_CHECKOUT_REQUEST",
-      };
-    }
-
-    /**
-     * Match MerchantRequestID.
-     */
-
-    if (
-      !payment.merchantRequestId ||
-      payment.merchantRequestId !==
-        callback.merchantRequestId
-    ) {
-      return {
-        accepted: false,
-
-        reason:
-          "MERCHANT_REQUEST_MISMATCH",
-      };
-    }
-
-    /**
-     * Normalize untrusted callback amount.
-     */
-
-    const reportedAmountMinor =
-      normalizeReportedAmount(
-        callback.amount
-      );
-
-    /**
-     * Save the event idempotently.
-     */
-
-    try {
-      await MpesaCallbackEvent.create({
-        paymentId:
-          payment._id,
-
-        checkoutRequestId:
-          callback.checkoutRequestId,
 
         merchantRequestId:
           callback.merchantRequestId,
-
-        resultCode:
-          callback.resultCode,
-
-        reportedAmountMinor,
-
-        reportedReceipt:
-          callback.receipt,
       });
+
+    if (!payment) {
+      await quarantineMpesaCallback(callback);
 
       return {
         accepted: true,
-
-        duplicate: false,
-
-        reason:
-          "CALLBACK_STORED",
+        quarantined: true,
+        reason: "UNMATCHED_CALLBACK_QUARANTINED",
       };
-    } catch (error) {
-      if (error?.code === 11000) {
+    }
+
+    const incoming = {
+      paymentId:
+        payment._id,
+
+      checkoutRequestId:
+        callback.checkoutRequestId,
+
+      merchantRequestId:
+        callback.merchantRequestId,
+
+      resultCode:
+        callback.resultCode,
+
+      reportedAmountMinor:
+        normalizeAmount(callback.amount),
+
+      reportedReceipt:
+        callback.receipt,
+    };
+
+    /**
+     * Atomically insert only when absent.
+     *
+     * The unique checkout index ensures
+     * concurrent first deliveries cannot
+     * create two primary events.
+     */
+
+    const existing =
+      await MpesaCallbackEvent.findOne({
+        checkoutRequestId:
+          callback.checkoutRequestId,
+      });
+
+    if (!existing) {
+      try {
+        await MpesaCallbackEvent.create(
+          incoming
+        );
+
         return {
           accepted: true,
-
-          duplicate: true,
-
-          reason:
-            "CALLBACK_ALREADY_STORED",
+          duplicate: false,
+          reason: "CALLBACK_STORED",
         };
+      } catch (error) {
+        if (error?.code !== 11000) {
+          throw error;
+        }
       }
-
-      throw error;
     }
+
+    /**
+     * Another request may have inserted
+     * the event concurrently.
+     */
+
+    const stored =
+      await MpesaCallbackEvent.findOne({
+        checkoutRequestId:
+          callback.checkoutRequestId,
+      });
+
+    if (!stored) {
+      throw new Error(
+        "Callback event disappeared during ingestion."
+      );
+    }
+
+    const reason =
+      detectConflict(stored, incoming);
+
+    if (!reason) {
+      return {
+        accepted: true,
+        duplicate: true,
+        reason: "CALLBACK_ALREADY_STORED",
+      };
+    }
+
+    /**
+     * Persist conflicting callback evidence.
+     */
+
+    await MpesaCallbackConflict.create({
+      callbackEventId:
+        stored._id,
+
+      checkoutRequestId:
+        callback.checkoutRequestId,
+
+      merchantRequestId:
+        callback.merchantRequestId,
+
+      originalResultCode:
+        stored.resultCode,
+
+      conflictingResultCode:
+        callback.resultCode,
+
+      reason,
+    });
+
+    /**
+     * Escalate to manual review.
+     *
+     * Do not modify payment state.
+     */
+
+    await MpesaCallbackEvent.updateOne(
+      {
+        _id: stored._id,
+      },
+      {
+        $set: {
+          hasConflict: true,
+
+          lastConflictAt:
+            new Date(),
+
+          lastConflictReason:
+            reason,
+
+          status:
+            MPESA_CALLBACK_EVENT_STATUSES.MANUAL_REVIEW,
+
+          manualReviewRequiredAt:
+            new Date(),
+
+          manualReviewReason:
+            "CONFLICTING_CALLBACK_DELIVERY",
+
+          nextAttemptAt: null,
+
+          leaseOwner: null,
+
+          leaseExpiresAt: null,
+        },
+
+        $inc: {
+          conflictCount: 1,
+          __v: 1,
+        },
+      }
+    );
+
+    return {
+      accepted: true,
+      duplicate: true,
+      conflict: true,
+      reason: "CALLBACK_CONFLICT_RECORDED",
+    };
   };
