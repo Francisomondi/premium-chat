@@ -10,132 +10,290 @@ import PaymentDispatchCoordination, {
 
 import AppError from "../utils/AppError.js";
 
-const IN_FLIGHT_STATES = [
-  DISPATCH_STATES.AUTHORIZED,
+/**
+ * ============================================================
+ * PREMIUMCHAT — PAYMENT CANCELLATION COORDINATION
+ * ============================================================
+ *
+ * MODULE 4.3.5.7.8.13.17.5
+ *
+ * PURPOSE:
+ *
+ * Safely cancel PENDING subscriptions while
+ * coordinating outstanding M-Pesa dispatches.
+ *
+ * SECURITY:
+ *
+ * - Cancellation and dispatch authorization
+ *   write to the same subscription document.
+ *
+ * - Settlement coordination must also write
+ *   to the same subscription document.
+ *
+ * - Authorized but unstarted dispatches are
+ *   blocked.
+ *
+ * - Already-started dispatches are flagged
+ *   for financial review.
+ *
+ * - Canceled subscriptions cannot be
+ *   automatically reactivated.
+ *
+ * - Cancellation does not imply that an
+ *   in-flight M-Pesa charge was reversed.
+ *
+ * IMPORTANT:
+ *
+ * This service is only for PENDING subscriptions.
+ *
+ * Existing ACTIVE subscription cancellation
+ * logic must remain separate.
+ */
+
+const isValidId = (value) =>
+  typeof value === "string" &&
+  mongoose.isObjectIdOrHexString(value);
+
+const fail = (
+  message,
+  code,
+  status = 409
+) => {
+  throw new AppError(
+    message,
+    status,
+    code
+  );
+};
+
+const REVIEW_STATES = [
   DISPATCH_STATES.DISPATCHING,
   DISPATCH_STATES.ACCEPTED,
   DISPATCH_STATES.UNKNOWN,
 ];
 
 /**
- * Cancel a PENDING subscription while recording
- * unresolved payment dispatches.
- *
- * This function is only for PENDING subscriptions.
- * It must not replace existing ACTIVE subscription
- * cancellation or end-of-period cancellation logic.
+ * ============================================================
+ * CANCEL PENDING SUBSCRIPTION SAFELY
+ * ============================================================
  */
-export const cancelPendingSubscriptionSafely = async ({
-  subscriptionId,
-  subscriberId,
-}) => {
-  const session = await mongoose.startSession();
 
-  try {
+export const cancelPendingSubscriptionSafely =
+  async ({
+    subscriptionId,
+    subscriberId,
+  } = {}) => {
+    if (
+      !isValidId(subscriptionId) ||
+      !isValidId(subscriberId)
+    ) {
+      fail(
+        "Invalid subscription cancellation request.",
+        "INVALID_CANCELLATION_REQUEST",
+        400
+      );
+    }
+
     let result;
 
-    await session.withTransaction(async () => {
-      const subscription =
-        await SubscriberSubscription.findOne({
-          _id: subscriptionId,
-          subscriberId,
-          status: SUBSCRIPTION_STATUSES.PENDING,
-        }).session(session);
+    await mongoose.connection.transaction(
+      async (session) => {
+        /**
+         * STEP 1:
+         * Load subscription.
+         */
 
-      if (!subscription) {
-        throw new AppError(
-          "Pending subscription not found.",
-          404,
-          "PENDING_SUBSCRIPTION_NOT_FOUND"
-        );
-      }
-
-      const cancellationTime = new Date();
-
-      const updated =
-        await SubscriberSubscription.updateOne(
-          {
+        const subscription =
+          await SubscriberSubscription.findOne({
             _id: subscriptionId,
+
             subscriberId,
-            status: SUBSCRIPTION_STATUSES.PENDING,
+
+            status:
+              SUBSCRIPTION_STATUSES.PENDING,
+          }).session(session);
+
+        if (!subscription) {
+          fail(
+            "Pending subscription not found.",
+            "PENDING_SUBSCRIPTION_NOT_FOUND",
+            404
+          );
+        }
+
+        /**
+         * STEP 2:
+         * Record cancellation time.
+         */
+
+        const cancellationTime =
+          new Date();
+
+        /**
+         * STEP 3:
+         * Atomically cancel subscription.
+         *
+         * The version check protects against
+         * concurrent subscription changes.
+         */
+
+        const updated =
+          await SubscriberSubscription.updateOne(
+            {
+              _id:
+                subscription._id,
+
+              subscriberId,
+
+              status:
+                SUBSCRIPTION_STATUSES.PENDING,
+
+              __v:
+                subscription.__v,
+
+              canceledAt:
+                null,
+            },
+            {
+              $set: {
+                status:
+                  SUBSCRIPTION_STATUSES.CANCELED,
+
+                canceledAt:
+                  cancellationTime,
+
+                cancelAtPeriodEnd:
+                  false,
+              },
+
+              $inc: {
+                __v: 1,
+              },
+            },
+            {
+              session,
+            }
+          );
+
+        if (
+          updated.modifiedCount !== 1
+        ) {
+          fail(
+            "Subscription changed during cancellation.",
+            "SUBSCRIPTION_CANCELLATION_CONFLICT"
+          );
+        }
+
+        /**
+         * STEP 4:
+         * Block authorized dispatches that
+         * have not started.
+         */
+
+        await PaymentDispatchCoordination.updateMany(
+          {
+            subscriptionId:
+              subscription._id,
+
+            state:
+              DISPATCH_STATES.AUTHORIZED,
           },
           {
             $set: {
-              status: SUBSCRIPTION_STATUSES.CANCELED,
+              state:
+                DISPATCH_STATES.BLOCKED,
+
+              cancellationRequestedAt:
+                cancellationTime,
             },
-            $inc: { __v: 1 },
           },
-          { session }
+          {
+            session,
+          }
         );
 
-      if (updated.modifiedCount !== 1) {
-        throw new AppError(
-          "Subscription cancellation conflicted with another operation.",
-          409,
-          "SUBSCRIPTION_CANCELLATION_CONFLICT"
+        /**
+         * STEP 5:
+         * Flag in-flight dispatches.
+         *
+         * These may still result in a charge.
+         */
+
+        await PaymentDispatchCoordination.updateMany(
+          {
+            subscriptionId:
+              subscription._id,
+
+            state: {
+              $in:
+                REVIEW_STATES,
+            },
+          },
+          {
+            $set: {
+              cancellationRequestedAt:
+                cancellationTime,
+
+              requiresManualReview:
+                true,
+
+              manualReviewReason:
+                "SUBSCRIPTION_CANCELED_WITH_PAYMENT_IN_FLIGHT",
+            },
+          },
+          {
+            session,
+          }
         );
+
+        /**
+         * STEP 6:
+         * Count dispatches requiring review.
+         */
+
+        const unresolved =
+          await PaymentDispatchCoordination.countDocuments({
+            subscriptionId:
+              subscription._id,
+
+            state: {
+              $in:
+                REVIEW_STATES,
+            },
+          }).session(session);
+
+        /**
+         * STEP 7:
+         * Return cancellation result.
+         */
+
+        result = {
+          canceled: true,
+
+          subscriptionId:
+            subscription._id.toString(),
+
+          canceledAt:
+            cancellationTime,
+
+          unresolvedPaymentDispatches:
+            unresolved,
+
+          requiresPaymentReview:
+            unresolved > 0,
+
+          paymentReversed:
+            false,
+
+          subscriptionActivated:
+            false,
+        };
       }
-
-      /*
-       * Prevent dispatches that have only
-       * been authorized but have not started.
-       */
-      await PaymentDispatchCoordination.updateMany(
-        {
-          subscriptionId,
-          state: DISPATCH_STATES.AUTHORIZED,
-        },
-        {
-          $set: {
-            state: DISPATCH_STATES.BLOCKED,
-            cancellationRequestedAt: cancellationTime,
-          },
-        },
-        { session }
-      );
-
-      /*
-       * Already-started or accepted dispatches
-       * may still produce a charge or callback.
-       */
-      await PaymentDispatchCoordination.updateMany(
-        {
-          subscriptionId,
-          state: {
-            $in: [
-              DISPATCH_STATES.DISPATCHING,
-              DISPATCH_STATES.ACCEPTED,
-              DISPATCH_STATES.UNKNOWN,
-            ],
-          },
-        },
-        {
-          $set: {
-            cancellationRequestedAt: cancellationTime,
-            requiresManualReview: true,
-            manualReviewReason:
-              "SUBSCRIPTION_CANCELED_WITH_PAYMENT_IN_FLIGHT",
-          },
-        },
-        { session }
-      );
-
-      const unresolved =
-        await PaymentDispatchCoordination.countDocuments({
-          subscriptionId,
-          state: { $in: IN_FLIGHT_STATES },
-        }).session(session);
-
-      result = {
-        canceled: true,
-        subscriptionId: subscriptionId.toString(),
-        unresolvedPaymentDispatches: unresolved,
-        requiresPaymentReview: unresolved > 0,
-      };
-    });
+    );
 
     return result;
-  } finally {
-    await session.endSession();
-  }
+  };
+
+export default {
+  cancelPendingSubscriptionSafely,
 };

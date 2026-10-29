@@ -2,6 +2,8 @@ import {
   getMpesaConfig,
 } from "./mpesa.config.js";
 
+export const MPESA_QUERY_OPERATION_TIMEOUT_MS = 45_000;
+
 /**
  * ============================================================
  * PREMIUMCHAT — SAFARICOM DARAJA CLIENT
@@ -24,6 +26,7 @@ import {
  */
 
 const REQUEST_TIMEOUT_MS = 15000;
+
 
 let cachedToken = null;
 
@@ -534,3 +537,118 @@ export const queryMpesaStkStatus =
       rawResponse: data,
     };
   };
+
+  /**
+ * ============================================================
+ * PREMIUMCHAT — QUERY M-PESA TRANSACTION STATUS
+ * ============================================================
+ *
+ * Initiates a Transaction Status enquiry.
+ *
+ * IMPORTANT:
+ * - Requires an M-Pesa receipt number.
+ * - Safaricom responds asynchronously.
+ * - Request acceptance does not verify settlement.
+ * - Does not update payment or subscription records.
+ */
+
+export const queryMpesaTransactionStatus = async ({
+  receiptNumber,
+  remarks = "PremiumChat payment verification",
+}) => {
+  const config = getMpesaConfig();
+
+  if (
+    !config.transactionStatusEnabled ||
+    !config.transactionStatus
+  ) {
+    throw new Error(
+      "M-Pesa Transaction Status is not enabled."
+    );
+  }
+
+  if (
+    typeof receiptNumber !== "string" ||
+    !/^[A-Za-z0-9]{8,30}$/.test(receiptNumber)
+  ) {
+    throw new Error(
+      "Invalid M-Pesa receipt number."
+    );
+  }
+
+  const accessToken =
+    await getMpesaAccessToken();
+
+  const {
+    initiatorName,
+    securityCredential,
+    resultUrl,
+    timeoutUrl,
+  } = config.transactionStatus;
+
+  const payload = {
+    Initiator: initiatorName,
+
+    SecurityCredential: securityCredential,
+
+    CommandID: "TransactionStatusQuery",
+
+    TransactionID: receiptNumber,
+
+    PartyA: config.shortcode,
+
+    IdentifierType: "4",
+
+    ResultURL: resultUrl,
+
+    QueueTimeOutURL: timeoutUrl,
+
+    Remarks: remarks,
+
+    Occasion: "PremiumChat",
+  };
+
+  const data = await requestJson(
+    `${config.baseUrl}/mpesa/transactionstatus/v1/query`,
+    {
+      method: "POST",
+
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+
+        "Content-Type": "application/json",
+      },
+
+      body: JSON.stringify(payload),
+    }
+  );
+
+  const responseCode =
+    String(data?.ResponseCode ?? "");
+
+  if (
+    responseCode !== "0" ||
+    !data?.ConversationID ||
+    !data?.OriginatorConversationID
+  ) {
+    throw new Error(
+      "Safaricom did not accept the transaction status enquiry."
+    );
+  }
+
+  return {
+    accepted: true,
+
+    receiptNumber,
+
+    conversationId: data.ConversationID,
+
+    originatorConversationId:
+      data.OriginatorConversationID,
+
+    responseCode,
+
+    responseDescription:
+      data.ResponseDescription || null,
+  };
+};

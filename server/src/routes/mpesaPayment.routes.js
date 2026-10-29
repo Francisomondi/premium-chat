@@ -1,6 +1,4 @@
-import {
-  Router,
-} from "express";
+import { Router } from "express";
 
 import {
   requireAuth,
@@ -8,6 +6,7 @@ import {
 
 import {
   initiateMySubscriptionMpesaPayment,
+  getMyMpesaPaymentStatus,
 } from "../controllers/mpesaPayment.controller.js";
 
 /**
@@ -19,12 +18,10 @@ import {
  *
  * /api/payments/mpesa
  *
- * Security:
+ * All endpoints require authentication.
  *
- * - Authentication required.
- * - Subscriber identity comes from req.auth.
- * - No direct payment confirmation endpoint.
- * - No direct subscription activation endpoint.
+ * No endpoint permits client-controlled
+ * payment confirmation or activation.
  */
 
 const router = Router();
@@ -33,11 +30,25 @@ router.use(requireAuth);
 
 /**
  * POST /api/payments/mpesa/stk-push
+ *
+ * Initiate a subscription payment.
  */
 
 router.post(
   "/stk-push",
   initiateMySubscriptionMpesaPayment
+);
+
+/**
+ * GET /api/payments/mpesa/:paymentId/status
+ *
+ * Retrieve the authenticated user's
+ * payment status.
+ */
+
+router.get(
+  "/:paymentId/status",
+  getMyMpesaPaymentStatus
 );
 
 export default router;

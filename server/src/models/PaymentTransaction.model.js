@@ -387,6 +387,98 @@ merchantRequestId: {
 },
 
 /**
+ * ============================================================
+ * M-PESA TRANSACTION STATUS ENQUIRY
+ * ============================================================
+ *
+ * Tracks Safaricom Transaction Status requests.
+ *
+ * These fields do not prove payment settlement.
+ */
+
+transactionStatusEnquiry: {
+    claimToken: {
+    type: String,
+    default: null,
+  },
+
+  claimExpiresAt: {
+    type: Date,
+    default: null,
+  },
+  receiptNumber: {
+    type: String,
+    default: null,
+    trim: true,
+    maxlength: 30,
+  },
+
+  conversationId: {
+    type: String,
+    default: null,
+    trim: true,
+    maxlength: 255,
+  },
+
+  originatorConversationId: {
+    type: String,
+    default: null,
+    trim: true,
+    maxlength: 255,
+  },
+
+  status: {
+    type: String,
+    enum: [
+      "PENDING",
+      "ACCEPTED",
+      "COMPLETED",
+      "FAILED",
+      "TIMED_OUT",
+      "MANUAL_REVIEW",
+    ],
+    default: "PENDING",
+  },
+
+  requestedAt: {
+    type: Date,
+    default: null,
+  },
+
+  acceptedAt: {
+    type: Date,
+    default: null,
+  },
+
+  completedAt: {
+    type: Date,
+    default: null,
+  },
+
+  lastErrorCode: {
+    type: String,
+    default: null,
+    maxlength: 100,
+  },
+  notificationDigest: {
+    type: String,
+    default: null,
+    match: /^[a-f0-9]{64}$/,
+  },
+
+  notificationReceivedAt: {
+    type: Date,
+    default: null,
+  },
+
+  notificationType: {
+    type: String,
+    enum: ["RESULT", "TIMEOUT"],
+    default: null,
+  },
+},
+
+/**
  * Last known initiation error code.
  *
  * Do not store credentials or sensitive
@@ -679,6 +771,29 @@ paymentTransactionSchema.index(
           "PENDING",
           "PROCESSING",
         ],
+      },
+    },
+  }
+);
+
+/**
+ * ============================================================
+ * TRANSACTION STATUS ENQUIRY LOOKUP
+ * ============================================================
+ */
+
+paymentTransactionSchema.index(
+  {
+    "transactionStatusEnquiry.originatorConversationId": 1,
+  },
+  {
+    unique: true,
+
+    name: "unique_mpesa_status_enquiry",
+
+    partialFilterExpression: {
+      "transactionStatusEnquiry.originatorConversationId": {
+        $type: "string",
       },
     },
   }

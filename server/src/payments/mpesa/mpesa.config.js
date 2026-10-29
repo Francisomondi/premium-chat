@@ -59,6 +59,49 @@ export const getMpesaConfig = () => {
   const callbackUrl =
     getRequiredEnv("MPESA_CALLBACK_URL");
 
+  const transactionStatusEnabled =
+  process.env.MPESA_TRANSACTION_STATUS_ENABLED === "true";
+
+let transactionStatus = null;
+
+if (transactionStatusEnabled) {
+  const initiatorName =
+    getRequiredEnv("MPESA_INITIATOR_NAME");
+
+  const securityCredential =
+    getRequiredEnv("MPESA_SECURITY_CREDENTIAL");
+
+  const resultUrl =
+    getRequiredEnv("MPESA_TRANSACTION_STATUS_RESULT_URL");
+
+  const timeoutUrl =
+    getRequiredEnv("MPESA_TRANSACTION_STATUS_TIMEOUT_URL");
+
+  for (const [name, value] of [
+    ["MPESA_TRANSACTION_STATUS_RESULT_URL", resultUrl],
+    ["MPESA_TRANSACTION_STATUS_TIMEOUT_URL", timeoutUrl],
+  ]) {
+    let parsedUrl;
+
+    try {
+      parsedUrl = new URL(value);
+    } catch {
+      throw new Error(`${name} must be a valid URL.`);
+    }
+
+    if (parsedUrl.protocol !== "https:") {
+      throw new Error(`${name} must use HTTPS.`);
+    }
+  }
+
+  transactionStatus = Object.freeze({
+    initiatorName,
+    securityCredential,
+    resultUrl,
+    timeoutUrl,
+  });
+}
+
   const parsedCallbackUrl =
     new URL(callbackUrl);
 
@@ -93,5 +136,9 @@ export const getMpesaConfig = () => {
 
     paymentsEnabled:
       process.env.MPESA_PAYMENTS_ENABLED === "true",
+
+    transactionStatusEnabled,
+
+    transactionStatus,
   });
 };

@@ -15,11 +15,9 @@ import creatorMonetizationRoutes from "./routes/creatorMonetization.routes.js";
 import creatorSubscriptionPlanRoutes from "./routes/creatorSubscriptionPlan.routes.js";
 
 import publicCreatorSubscriptionPlanRoutes from "./routes/publicCreatorSubscriptionPlan.routes.js";
-/**
- * ============================================================
- * MODULE 4.3.5 — SUBSCRIBER SUBSCRIPTION MANAGEMENT
- * ============================================================
- */
+
+import mpesaTransactionStatusRoutes from "./routes/mpesaTransactionStatus.routes.js";
+
 
 import subscriberSubscriptionRoutes from "./routes/subscriberSubscription.routes.js";
 
@@ -284,6 +282,11 @@ if (!env.IS_PRODUCTION) {
 app.use(
   `${env.API_PREFIX}/payments/mpesa`,
   mpesaCallbackRoutes
+);
+
+app.use(
+  "/api/payments/mpesa/transaction-status",
+  mpesaTransactionStatusRoutes
 );
 
 /*

@@ -7,11 +7,45 @@ const { Schema } = mongoose;
  * PREMIUMCHAT — M-PESA CALLBACK CONFLICT
  * ============================================================
  *
- * Stores bounded evidence of contradictory
- * callback deliveries.
+ * MODULE 4.3.5.7.8.13.17.6.7
  *
- * Callback data remains untrusted.
+ * Stores contradictory callback deliveries.
+ *
+ * SECURITY:
+ *
+ * - Callback data remains untrusted.
+ * - Conflict records never verify payment.
+ * - Conflict records never grant access.
+ * - Conflict evidence must be retained for audit.
  */
+
+/**
+ * Supported callback conflict reasons.
+ *
+ * These must match the reasons returned
+ * by detectConflict() in mpesaCallback.service.js.
+ */
+
+export const MPESA_CALLBACK_CONFLICT_REASONS =
+  Object.freeze({
+    PAYMENT_ID_MISMATCH:
+      "PAYMENT_ID_MISMATCH",
+
+    CHECKOUT_REQUEST_ID_MISMATCH:
+      "CHECKOUT_REQUEST_ID_MISMATCH",
+
+    MERCHANT_REQUEST_ID_MISMATCH:
+      "MERCHANT_REQUEST_ID_MISMATCH",
+
+    RESULT_CODE_MISMATCH:
+      "RESULT_CODE_MISMATCH",
+
+    AMOUNT_MISMATCH:
+      "AMOUNT_MISMATCH",
+
+    RECEIPT_MISMATCH:
+      "RECEIPT_MISMATCH",
+  });
 
 const mpesaCallbackConflictSchema =
   new Schema(
@@ -59,23 +93,29 @@ const mpesaCallbackConflictSchema =
 
         required: true,
 
-        enum: [
-          "RESULT_CODE_MISMATCH",
-          "AMOUNT_MISMATCH",
-          "RECEIPT_MISMATCH",
-        ],
+        enum: Object.values(
+          MPESA_CALLBACK_CONFLICT_REASONS
+        ),
       },
 
       receivedAt: {
         type: Date,
 
         default: Date.now,
+
+        required: true,
       },
     },
     {
       timestamps: true,
+
+      versionKey: "__v",
     }
   );
+
+/**
+ * Callback conflict history.
+ */
 
 mpesaCallbackConflictSchema.index(
   {

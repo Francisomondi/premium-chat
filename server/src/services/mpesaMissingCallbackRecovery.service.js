@@ -90,10 +90,13 @@ export const recoverMissingMpesaCallbacks =
 
       try {
         const result =
-          await reconcileMpesaPayment({
+        await reconcileMpesaPayment({
             paymentId:
-              payment._id.toString(),
-          });
+            payment._id.toString(),
+
+            reconciliationOperationId:
+            `missing-callback:${payment._id.toString()}`,
+        });
 
         if (result.checked) {
           checked++;

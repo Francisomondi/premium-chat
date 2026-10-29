@@ -83,6 +83,17 @@ export const claimNextMpesaReconciliationEvent =
         {
           $and: [
             {
+            $expr: {
+                $lt: [
+                "$attemptCount",
+                MPESA_RECONCILIATION_POLICY.MAX_ATTEMPTS,
+                ],
+            },
+            },
+            {
+            hasConflict: false,
+            },
+            {
               $or: [
                 {
                   status: {
@@ -238,6 +249,7 @@ export const finalizeMpesaReconciliationEvent =
           leaseExpiresAt: {
             $gt: now,
           },
+          hasConflict: false,
         },
         {
           $set: {

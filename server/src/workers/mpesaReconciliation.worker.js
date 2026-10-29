@@ -4,6 +4,10 @@ import {
   randomUUID,
 } from "node:crypto";
 
+import MpesaCallbackEvent, {
+  MPESA_CALLBACK_EVENT_STATUSES,
+} from "../models/MpesaCallbackEvent.model.js";
+
 import {
   claimNextMpesaReconciliationEvent,
   finalizeMpesaReconciliationEvent,
@@ -18,18 +22,30 @@ import {
  * PREMIUMCHAT — DURABLE M-PESA RECONCILIATION WORKER
  * ============================================================
  *
- * Module 4.3.5.7.8.13.14
+ * MODULE 4.3.5.7.8.13.17.6.9
  *
- * - Atomic event claims.
- * - Expiring leases.
- * - Exponential retry backoff.
- * - Manual-review escalation.
+ * RESPONSIBILITIES:
  *
- * Does not:
+ * - Claim callback reconciliation events.
+ * - Query provider through reconciliation service.
+ * - Finalize events using their existing lease.
+ * - Respect concurrent conflict escalation.
+ * - Track unresolved and manual-review outcomes.
+ * - Stop after bounded work.
  *
- * - Initiate STK Push.
- * - Mark payments successful.
- * - Activate subscriptions.
+ * SECURITY:
+ *
+ * - No STK Push initiation.
+ * - No payment success assignment.
+ * - No financial verification.
+ * - No subscription activation.
+ * - No premium content authorization.
+ *
+ * CONCURRENCY:
+ *
+ * - Finalization requires the original lease.
+ * - Conflicting callbacks invalidate that lease.
+ * - Lost leases are never forcefully reclaimed.
  */
 
 const MAX_EVENTS_PER_RUN = 100;
@@ -40,9 +56,79 @@ const MAX_RUNTIME_MS =
 const workerId =
   `mpesa-${randomUUID()}`;
 
+/**
+ * ============================================================
+ * FEATURE FLAG
+ * ============================================================
+ *
+ * Default: disabled.
+ *
+ * The worker must be explicitly enabled
+ * before processing reconciliation jobs.
+ */
+
+const isWorkerEnabled = () =>
+  process.env.PAYMENT_RECOVERY_WORKER_ENABLED ===
+  "true";
+
+/**
+ * ============================================================
+ * INSPECT LOST LEASE
+ * ============================================================
+ *
+ * A lease may be lost because:
+ *
+ * 1. Another worker reclaimed it.
+ * 2. The lease expired.
+ * 3. A provider conflict escalated the callback.
+ * 4. A duplicate callback conflict escalated it.
+ *
+ * Never overwrite the current state.
+ */
+
+const inspectLostLease = async ({
+  callbackEventId,
+}) => {
+  const current =
+    await MpesaCallbackEvent.findById(
+      callbackEventId
+    ).select(
+      "status hasConflict manualReviewReason"
+    );
+
+  if (!current) {
+    return {
+      manualReview: false,
+      reason: "CALLBACK_EVENT_NOT_FOUND",
+    };
+  }
+
+  if (
+    current.status ===
+    MPESA_CALLBACK_EVENT_STATUSES.MANUAL_REVIEW
+  ) {
+    return {
+      manualReview: true,
+      reason:
+        current.manualReviewReason ||
+        "CALLBACK_MANUAL_REVIEW",
+    };
+  }
+
+  return {
+    manualReview: false,
+    reason: "LEASE_LOST",
+  };
+};
+
+/**
+ * ============================================================
+ * RUN RECONCILIATION
+ * ============================================================
+ */
+
 const runReconciliation = async () => {
-  const startedAt =
-    Date.now();
+  const startedAt = Date.now();
 
   let processed = 0;
 
@@ -50,11 +136,22 @@ const runReconciliation = async () => {
 
   let manualReview = 0;
 
+  let leaseLost = 0;
+
+  let reconciled = 0;
+
+  let retryScheduled = 0;
+
   while (
     processed < MAX_EVENTS_PER_RUN &&
     Date.now() - startedAt <
       MAX_RUNTIME_MS
   ) {
+    /**
+     * STEP 1:
+     * Claim next eligible callback.
+     */
+
     const event =
       await claimNextMpesaReconciliationEvent({
         workerId,
@@ -64,7 +161,14 @@ const runReconciliation = async () => {
       break;
     }
 
+    processed++;
+
     let result;
+
+    /**
+     * STEP 2:
+     * Perform reconciliation.
+     */
 
     try {
       if (!event.paymentId) {
@@ -73,17 +177,23 @@ const runReconciliation = async () => {
           reason: "PAYMENT_ID_MISSING",
         };
       } else {
-        result =
-          await reconcileMpesaPayment({
-            paymentId:
-              event.paymentId.toString(),
-          });
+      const reconciliationOperationId =
+        `CALLBACK:${event._id.toString()}:${event.attemptCount}`;
+
+      result =
+        await reconcileMpesaPayment({
+          paymentId:
+            event.paymentId.toString(),
+
+          reconciliationOperationId,
+        });
       }
     } catch (error) {
       failed++;
 
       result = {
         checked: false,
+
         reason:
           "RECONCILIATION_EXECUTION_FAILED",
       };
@@ -97,45 +207,190 @@ const runReconciliation = async () => {
             event._id.toString(),
 
           error:
-            error.message,
+            error?.message ||
+            "UNKNOWN_ERROR",
         })
       );
     }
 
-    const finalization =
-      await finalizeMpesaReconciliationEvent({
-        event,
-        result,
-      });
+    /**
+     * STEP 3:
+     * Finalize using the original lease.
+     */
 
-    if (
-      finalization.status ===
-      "MANUAL_REVIEW"
-    ) {
-      manualReview++;
+    let finalization;
+
+    try {
+      finalization =
+        await finalizeMpesaReconciliationEvent({
+          event,
+          result,
+        });
+    } catch (error) {
+      failed++;
+
+      console.error(
+        JSON.stringify({
+          event:
+            "MPESA_RECONCILIATION_FINALIZATION_ERROR",
+
+          callbackEventId:
+            event._id.toString(),
+
+          error:
+            error?.message ||
+            "UNKNOWN_ERROR",
+        })
+      );
+
+      /**
+       * Do not forcefully update the event.
+       *
+       * Its lease will eventually expire,
+       * allowing the queue to recover it.
+       */
+
+      continue;
     }
 
-    processed++;
+    /**
+     * STEP 4:
+     * Handle lost lease.
+     */
+
+    if (!finalization?.finalized) {
+      leaseLost++;
+
+      const inspection =
+        await inspectLostLease({
+          callbackEventId:
+            event._id.toString(),
+        });
+
+      if (inspection.manualReview) {
+        manualReview++;
+
+        console.warn(
+          JSON.stringify({
+            event:
+              "MPESA_RECONCILIATION_MANUAL_REVIEW",
+
+            callbackEventId:
+              event._id.toString(),
+
+            reason:
+              inspection.reason,
+          })
+        );
+
+        continue;
+      }
+
+      console.warn(
+        JSON.stringify({
+          event:
+            "MPESA_RECONCILIATION_LEASE_LOST",
+
+          callbackEventId:
+            event._id.toString(),
+
+          reason:
+            inspection.reason,
+        })
+      );
+
+      continue;
+    }
+
+    /**
+     * STEP 5:
+     * Count finalized outcomes.
+     */
+
+    switch (finalization.status) {
+      case MPESA_CALLBACK_EVENT_STATUSES.RECONCILED:
+        reconciled++;
+        break;
+
+      case MPESA_CALLBACK_EVENT_STATUSES.RETRY_SCHEDULED:
+        retryScheduled++;
+        break;
+
+      case MPESA_CALLBACK_EVENT_STATUSES.MANUAL_REVIEW:
+        manualReview++;
+        break;
+
+      default:
+        break;
+    }
   }
 
   return {
     processed,
+
     failed,
+
+    reconciled,
+
+    retryScheduled,
+
     manualReview,
+
+    leaseLost,
   };
 };
 
+/**
+ * ============================================================
+ * MAIN
+ * ============================================================
+ */
+
 const main = async () => {
   try {
+    /**
+     * STEP 1:
+     * Enforce feature flag.
+     */
+
+    if (!isWorkerEnabled()) {
+      console.log(
+        JSON.stringify({
+          event:
+            "MPESA_RECONCILIATION_WORKER_DISABLED",
+
+          reason:
+            "PAYMENT_RECOVERY_WORKER_ENABLED_FALSE",
+        })
+      );
+
+      return;
+    }
+
+    /**
+     * STEP 2:
+     * Require MongoDB connection string.
+     */
+
     if (!process.env.MONGODB_URI) {
       throw new Error(
         "MONGODB_URI is required."
       );
     }
 
+    /**
+     * STEP 3:
+     * Connect to MongoDB.
+     */
+
     await mongoose.connect(
       process.env.MONGODB_URI
     );
+
+    /**
+     * STEP 4:
+     * Process reconciliation queue.
+     */
 
     const result =
       await runReconciliation();
@@ -155,13 +410,22 @@ const main = async () => {
           "MPESA_RECONCILIATION_WORKER_FAILED",
 
         error:
-          error.message,
+          error?.message ||
+          "UNKNOWN_ERROR",
       })
     );
 
     process.exitCode = 1;
   } finally {
-    await mongoose.disconnect();
+    /**
+     * Disconnect safely.
+     */
+
+    if (
+      mongoose.connection.readyState !== 0
+    ) {
+      await mongoose.disconnect();
+    }
   }
 };
 

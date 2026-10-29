@@ -4,7 +4,9 @@ import MpesaCallbackEvent, {
   MPESA_CALLBACK_EVENT_STATUSES,
 } from "../models/MpesaCallbackEvent.model.js";
 
-import MpesaCallbackConflict from "../models/MpesaCallbackConflict.model.js";
+import {
+  recordMpesaCallbackConflict,
+} from "./mpesaCallbackConflictRecording.service.js";
 
 import {
   PAYMENT_PROVIDERS,
@@ -48,14 +50,46 @@ const normalizeAmount = (value) => {
 
 /**
  * ============================================================
- * COMPARE CALLBACK
+ * COMPARE CALLBACK IDENTITY AND CLAIMS
  * ============================================================
+ *
+ * Duplicate callbacks must match:
+ *
+ * - Payment identity
+ * - Checkout request ID
+ * - Merchant request ID
+ * - Result code
+ * - Reported amount
+ * - Reported receipt
+ *
+ * Callback claims remain untrusted.
  */
 
 const detectConflict = (
   existing,
   incoming
 ) => {
+  if (
+    existing.paymentId?.toString() !==
+    incoming.paymentId?.toString()
+  ) {
+    return "PAYMENT_ID_MISMATCH";
+  }
+
+  if (
+    existing.checkoutRequestId !==
+    incoming.checkoutRequestId
+  ) {
+    return "CHECKOUT_REQUEST_ID_MISMATCH";
+  }
+
+  if (
+    existing.merchantRequestId !==
+    incoming.merchantRequestId
+  ) {
+    return "MERCHANT_REQUEST_ID_MISMATCH";
+  }
+
   if (
     existing.resultCode !==
     incoming.resultCode
@@ -185,84 +219,64 @@ export const ingestMpesaCallback =
     const reason =
       detectConflict(stored, incoming);
 
-    if (!reason) {
-      return {
-        accepted: true,
-        duplicate: true,
-        reason: "CALLBACK_ALREADY_STORED",
-      };
-    }
+/**
+ * ============================================================
+ * IDENTICAL DUPLICATE CALLBACK
+ * ============================================================
+ *
+ * An identical duplicate must not clear
+ * an existing conflict or manual-review state.
+ */
 
-    /**
-     * Persist conflicting callback evidence.
-     */
+if (!reason) {
+  const requiresManualReview =
+    stored.hasConflict === true ||
+    stored.status ===
+      MPESA_CALLBACK_EVENT_STATUSES.MANUAL_REVIEW;
 
-    await MpesaCallbackConflict.create({
-      callbackEventId:
-        stored._id,
+  return {
+    accepted: true,
 
-      checkoutRequestId:
-        callback.checkoutRequestId,
+    duplicate: true,
 
-      merchantRequestId:
-        callback.merchantRequestId,
+    conflict:
+      stored.hasConflict === true,
 
-      originalResultCode:
-        stored.resultCode,
+    requiresManualReview,
 
-      conflictingResultCode:
-        callback.resultCode,
+    callbackEventId:
+      stored._id.toString(),
 
-      reason,
-    });
-
-    /**
-     * Escalate to manual review.
-     *
-     * Do not modify payment state.
-     */
-
-    await MpesaCallbackEvent.updateOne(
-      {
-        _id: stored._id,
-      },
-      {
-        $set: {
-          hasConflict: true,
-
-          lastConflictAt:
-            new Date(),
-
-          lastConflictReason:
-            reason,
-
-          status:
-            MPESA_CALLBACK_EVENT_STATUSES.MANUAL_REVIEW,
-
-          manualReviewRequiredAt:
-            new Date(),
-
-          manualReviewReason:
-            "CONFLICTING_CALLBACK_DELIVERY",
-
-          nextAttemptAt: null,
-
-          leaseOwner: null,
-
-          leaseExpiresAt: null,
-        },
-
-        $inc: {
-          conflictCount: 1,
-          __v: 1,
-        },
-      }
-    );
-
-    return {
-      accepted: true,
-      duplicate: true,
-      conflict: true,
-      reason: "CALLBACK_CONFLICT_RECORDED",
-    };
+    reason: requiresManualReview
+      ? "CALLBACK_ALREADY_STORED_REVIEW_REQUIRED"
+      : "CALLBACK_ALREADY_STORED",
   };
+}
+
+
+
+await recordMpesaCallbackConflict({
+  callbackEventId:
+    stored._id.toString(),
+
+  incoming,
+
+  reason,
+});
+
+return {
+  accepted: true,
+
+  duplicate: true,
+
+  conflict: true,
+
+  requiresManualReview: true,
+
+  callbackEventId:
+    stored._id.toString(),
+
+  reason:
+    "CALLBACK_CONFLICT_RECORDED",
+};
+};

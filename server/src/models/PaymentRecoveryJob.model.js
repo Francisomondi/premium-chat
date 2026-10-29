@@ -1,5 +1,20 @@
 import mongoose from "mongoose";
 
+/**
+ * ============================================================
+ * PREMIUMCHAT — PAYMENT RECOVERY JOB
+ * ============================================================
+ *
+ * MODULE 4.3.5.7.8.13.17.6.13
+ *
+ * TERMINAL STATES:
+ *
+ * - COMPLETED
+ * - MANUAL_REVIEW
+ *
+ * Neither state may be reclaimed automatically.
+ */
+
 export const RECOVERY_JOB_TYPES = Object.freeze({
   MISSING_CALLBACK: "MISSING_CALLBACK",
   UNMATCHED_CALLBACK: "UNMATCHED_CALLBACK",
@@ -30,6 +45,7 @@ const schema = new mongoose.Schema(
       type: String,
       enum: Object.values(RECOVERY_JOB_STATUSES),
       default: RECOVERY_JOB_STATUSES.PENDING,
+      required: true,
     },
 
     attemptCount: {
@@ -73,20 +89,48 @@ const schema = new mongoose.Schema(
       type: String,
       default: null,
     },
+
+    manualReviewRequiredAt: {
+      type: Date,
+      default: null,
+    },
   },
-  { timestamps: true }
+  {
+    timestamps: true,
+    versionKey: "__v",
+  }
 );
 
+/**
+ * One recovery job per resource and type.
+ */
 schema.index(
-  { type: 1, resourceId: 1 },
-  { unique: true }
+  {
+    type: 1,
+    resourceId: 1,
+  },
+  {
+    unique: true,
+    name: "unique_payment_recovery_resource",
+  }
 );
 
-schema.index({
-  status: 1,
-  nextAttemptAt: 1,
-  leaseExpiresAt: 1,
-});
+/**
+ * Recovery scheduling index.
+ */
+schema.index(
+  {
+    status: 1,
+    nextAttemptAt: 1,
+    leaseExpiresAt: 1,
+  },
+  {
+    name: "payment_recovery_schedule",
+  }
+);
 
-export default mongoose.models.PaymentRecoveryJob ||
+const PaymentRecoveryJob =
+  mongoose.models.PaymentRecoveryJob ||
   mongoose.model("PaymentRecoveryJob", schema);
+
+export default PaymentRecoveryJob;

@@ -102,11 +102,35 @@ export const parseMpesaStkCallback =
         "MpesaReceiptNumber"
       );
 
+      if (
+        receipt != null &&
+        (
+          typeof receipt !== "string" ||
+          !/^[A-Za-z0-9]{8,30}$/.test(receipt)
+        )
+      ) {
+        throw new Error(
+          "Invalid M-Pesa receipt number."
+        );
+      }
+
     const phoneNumber =
       getMetadataValue(
         items,
         "PhoneNumber"
       );
+
+      if (
+        resultCode === 0 &&
+        (
+          amount == null ||
+          receipt == null
+        )
+      ) {
+        throw new Error(
+          "Successful M-Pesa callback is missing payment metadata."
+        );
+      }
 
     return {
       checkoutRequestId,
