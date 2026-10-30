@@ -29,6 +29,8 @@ export const FINANCIAL_VERIFICATION_STATUSES =
     MANUAL_REVIEW: "MANUAL_REVIEW",
   });
 
+  
+
 export const FINANCIAL_EVIDENCE_SOURCES =
   Object.freeze({
     PROVIDER_SETTLEMENT: "PROVIDER_SETTLEMENT",
@@ -38,6 +40,20 @@ export const FINANCIAL_EVIDENCE_SOURCES =
       "RECONCILIATION_REPORT",
     MANUAL_VERIFICATION:
       "MANUAL_VERIFICATION",
+
+      PROVIDER_SETTLEMENT: "PROVIDER_SETTLEMENT",
+
+    PROVIDER_TRANSACTION_STATUS:
+      "PROVIDER_TRANSACTION_STATUS",
+
+    RECONCILIATION_REPORT:
+      "RECONCILIATION_REPORT",
+
+    MANUAL_VERIFICATION:
+      "MANUAL_VERIFICATION",
+
+    DARAJA_STK_QUERY:
+      "DARAJA_STK_QUERY",
   });
 
 const financialVerificationSchema =
@@ -130,7 +146,8 @@ const financialVerificationSchema =
     {
       timestamps: true,
       versionKey: "__v",
-    }
+    },
+    
   );
 
 /**
@@ -185,5 +202,7 @@ const MpesaFinancialVerification =
     "MpesaFinancialVerification",
     financialVerificationSchema
   );
+
+  
 
 export default MpesaFinancialVerification;

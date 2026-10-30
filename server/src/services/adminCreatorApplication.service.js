@@ -130,6 +130,49 @@ const assertActiveAdmin = async (adminId) => {
 
 /**
  * ============================================================
+ * ADMIN PAGINATION HELPER
+ * ============================================================
+ */
+const normalizeAdminPagination = ({
+  page = 1,
+  limit = 20,
+}) => {
+  const pageNumber = Number(page);
+  const pageSize = Number(limit);
+
+  if (
+    !Number.isSafeInteger(pageNumber) ||
+    pageNumber < 1 ||
+    !Number.isSafeInteger(pageSize) ||
+    pageSize < 1 ||
+    pageSize > 100
+  ) {
+    throw new AppError(
+      "Invalid pagination parameters.",
+      400,
+      "INVALID_PAGINATION"
+    );
+  }
+
+  const skip = (pageNumber - 1) * pageSize;
+
+  if (!Number.isSafeInteger(skip)) {
+    throw new AppError(
+      "Invalid pagination parameters.",
+      400,
+      "INVALID_PAGINATION"
+    );
+  }
+
+  return {
+    pageNumber,
+    pageSize,
+    skip,
+  };
+};
+
+/**
+ * ============================================================
  * LIST PENDING CREATOR APPLICATIONS
  * ============================================================
  *
@@ -361,3 +404,155 @@ export const reviewCreatorApplication = async ({
   );
 };
 
+/**
+ * ============================================================
+ * LIST CREATOR APPLICATIONS
+ * ============================================================
+ *
+ * Supports:
+ *
+ * ALL
+ * PENDING
+ * APPROVED
+ * REJECTED
+ *
+ * Applications are stored inside User documents.
+ *
+ * Sensitive authentication information is never returned.
+ */
+export const listCreatorApplications = async ({
+  adminId,
+  status = "ALL",
+  page = 1,
+  limit = 20,
+}) => {
+  await assertActiveAdmin(adminId);
+
+  const {
+    pageNumber,
+    pageSize,
+    skip,
+  } = normalizeAdminPagination({
+    page,
+    limit,
+  });
+
+  const allowedStatuses = [
+    "ALL",
+    CREATOR_APPLICATION_STATUSES.PENDING,
+    CREATOR_APPLICATION_STATUSES.APPROVED,
+    CREATOR_APPLICATION_STATUSES.REJECTED,
+  ];
+
+  if (!allowedStatuses.includes(status)) {
+    throw new AppError(
+      "Invalid creator application status.",
+      400,
+      "INVALID_APPLICATION_STATUS"
+    );
+  }
+
+  const filter = {
+    "creatorApplication.status": {
+      $in:
+        status === "ALL"
+          ? [
+              CREATOR_APPLICATION_STATUSES.PENDING,
+              CREATOR_APPLICATION_STATUSES.APPROVED,
+              CREATOR_APPLICATION_STATUSES.REJECTED,
+            ]
+          : [status],
+    },
+  };
+
+  const [users, total] = await Promise.all([
+    User.find(filter)
+      .select(
+        "_id displayName email avatarUrl role accountStatus creatorApplication"
+      )
+      .sort({
+        "creatorApplication.appliedAt": -1,
+        _id: -1,
+      })
+      .skip(skip)
+      .limit(pageSize)
+      .lean(),
+
+    User.countDocuments(filter),
+  ]);
+
+  return {
+    applications: users.map((user) => ({
+      ...toAdminApplicationResponse(user),
+
+      avatarUrl: user.avatarUrl ?? null,
+    })),
+
+    pagination: {
+      page: pageNumber,
+      limit: pageSize,
+      total,
+      totalPages: Math.ceil(total / pageSize),
+    },
+
+    filters: {
+      status,
+    },
+  };
+};
+
+/**
+ * ============================================================
+ * GET CREATOR APPLICATION DETAILS
+ * ============================================================
+ */
+export const getCreatorApplicationDetails = async ({
+  adminId,
+  userId,
+}) => {
+  await assertActiveAdmin(adminId);
+
+  if (!mongoose.isValidObjectId(userId)) {
+    throw new AppError(
+      "Invalid applicant ID.",
+      400,
+      "INVALID_APPLICANT_ID"
+    );
+  }
+
+  const user = await User.findById(userId)
+    .select(
+      "_id displayName email avatarUrl role accountStatus creatorApplication createdAt"
+    )
+    .lean();
+
+  if (!user) {
+    throw new AppError(
+      "Applicant not found.",
+      404,
+      "APPLICANT_NOT_FOUND"
+    );
+  }
+
+  if (
+    ![
+      CREATOR_APPLICATION_STATUSES.PENDING,
+      CREATOR_APPLICATION_STATUSES.APPROVED,
+      CREATOR_APPLICATION_STATUSES.REJECTED,
+    ].includes(user.creatorApplication?.status)
+  ) {
+    throw new AppError(
+      "This user has not submitted a creator application.",
+      404,
+      "CREATOR_APPLICATION_NOT_FOUND"
+    );
+  }
+
+  return {
+    ...toAdminApplicationResponse(user),
+
+    avatarUrl: user.avatarUrl ?? null,
+
+    registeredAt: user.createdAt ?? null,
+  };
+};

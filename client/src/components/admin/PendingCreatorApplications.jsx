@@ -527,6 +527,15 @@ const reviewInProgressRef = useRef(false);
 
       reviewSucceeded = true;
 
+      window.dispatchEvent(
+  new CustomEvent("premiumchat:creator-application-reviewed", {
+    detail: {
+      userId,
+      decision,
+    },
+  })
+);
+
       /*
        * ======================================================
        * REPORT SUCCESSFUL REVIEW

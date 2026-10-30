@@ -8,6 +8,13 @@ import {
   PAYMENT_VERIFICATION_STATUSES,
 } from "../constants/payment.constants.js";
 
+import MpesaCallbackEvent, {
+  MPESA_CALLBACK_EVENT_STATUSES,
+} from "../models/MpesaCallbackEvent.model.js";
+
+import {
+  verifyPaymentTransaction,
+} from "../services/paymentVerification.service.js";
 import {
   initiateSubscriptionMpesaPayment,
 } from "../services/mpesaPaymentInitiation.service.js";
@@ -78,21 +85,22 @@ export const initiateMySubscriptionMpesaPayment =
 
 /**
  * ============================================================
- * GET AUTHENTICATED PAYMENT STATUS
+ * GET AUTHENTICATED M-PESA PAYMENT STATUS
  * ============================================================
  *
  * GET /api/payments/mpesa/:paymentId/status
  *
- * Read-only endpoint.
+ * STEP 19.8.17
  *
- * A user can only retrieve their own payment.
+ * SECURITY:
  *
- * This endpoint does not:
- *
- * - Query Safaricom
- * - Verify payment evidence
- * - Activate subscriptions
- * - Modify payment records
+ * - Authentication required.
+ * - Payment ownership enforced.
+ * - Read-only.
+ * - No direct provider queries.
+ * - No payment verification writes.
+ * - No subscription activation.
+ * - No sensitive settlement evidence exposed.
  */
 
 export const getMyMpesaPaymentStatus = async (
@@ -102,13 +110,16 @@ export const getMyMpesaPaymentStatus = async (
 ) => {
   try {
     const payerId = req.auth.userId;
-
     const { paymentId } = req.params;
 
     /**
-     * Validate MongoDB ObjectId.
+     * STEP 1 — VALIDATE PAYMENT ID
      */
-    if (!mongoose.isValidObjectId(paymentId)) {
+
+    if (
+      typeof paymentId !== "string" ||
+      !mongoose.isObjectIdOrHexString(paymentId)
+    ) {
       return res.status(400).json({
         success: false,
         message: "Invalid payment ID.",
@@ -116,15 +127,13 @@ export const getMyMpesaPaymentStatus = async (
     }
 
     /**
-     * Retrieve only the authenticated
-     * subscriber's M-Pesa payment.
+     * STEP 2 — ENFORCE PAYMENT OWNERSHIP
      */
+
     const payment =
       await PaymentTransaction.findOne({
         _id: paymentId,
-
         payerId,
-
         provider: PAYMENT_PROVIDERS.MPESA,
       })
         .select(
@@ -135,6 +144,7 @@ export const getMyMpesaPaymentStatus = async (
             "verificationStatus",
             "amountMinor",
             "currency",
+            "providerTransactionId",
             "createdAt",
             "updatedAt",
             "paidAt",
@@ -152,12 +162,43 @@ export const getMyMpesaPaymentStatus = async (
     }
 
     /**
-     * Check the stored verified payment state.
+     * STEP 3 — INSPECT CALLBACK RECONCILIATION
      *
-     * This is a read-only status check,
-     * not independent financial verification.
+     * Callback status is informational.
+     *
+     * It cannot independently verify payment.
      */
-    const verified =
+
+    const callbackEvent =
+      payment.providerTransactionId
+        ? await MpesaCallbackEvent.findOne({
+            paymentId: payment._id,
+
+            checkoutRequestId:
+              payment.providerTransactionId,
+          })
+            .select(
+              [
+                "status",
+                "hasConflict",
+                "manualReviewRequiredAt",
+                "reconciledAt",
+              ].join(" ")
+            )
+            .lean()
+        : null;
+
+    /**
+     * STEP 4 — INSPECT FINANCIAL VERIFICATION
+     *
+     * Only invoke the verification service when
+     * the payment already claims verified state.
+     *
+     * This avoids unnecessary verification queries
+     * for ordinary pending payments.
+     */
+
+    const claimsVerified =
       payment.status ===
         PAYMENT_STATUSES.SUCCEEDED &&
       payment.verificationStatus ===
@@ -165,47 +206,104 @@ export const getMyMpesaPaymentStatus = async (
       Boolean(payment.verifiedAt) &&
       Boolean(payment.paidAt);
 
+    let verified = false;
+
+    if (claimsVerified) {
+      const verification =
+        await verifyPaymentTransaction({
+          paymentId:
+            payment._id.toString(),
+        });
+
+      verified =
+        verification.verified === true;
+    }
+
     /**
-     * Check whether the payment failed.
+     * STEP 5 — DERIVE USER-FACING STATUS
      *
-     * Avoid assuming additional enum values
-     * that may not exist in payment.constants.js.
+     * These are response statuses, not new
+     * PaymentTransaction enum values.
      */
-    const failed =
+
+    const manualReviewRequired =
+      callbackEvent?.hasConflict === true ||
+      Boolean(
+        callbackEvent?.manualReviewRequiredAt
+      ) ||
+      callbackEvent?.status ===
+        MPESA_CALLBACK_EVENT_STATUSES.MANUAL_REVIEW;
+
+    const checkoutReconciled =
+      callbackEvent?.status ===
+        MPESA_CALLBACK_EVENT_STATUSES.RECONCILED;
+
+    const storedPaymentFailed =
       payment.status ===
       PAYMENT_STATUSES.FAILED;
 
-    /**
-     * A payment can be verified without
-     * its subscription entitlement
-     * having been applied.
-     */
     const entitlementApplied =
       verified &&
-      Boolean(payment.entitlementAppliedAt);
+      Boolean(
+        payment.entitlementAppliedAt
+      );
+
+    let paymentStage = "PENDING_CHECKOUT";
+
+    if (manualReviewRequired) {
+      paymentStage =
+        "MANUAL_REVIEW_REQUIRED";
+    } else if (
+      claimsVerified &&
+      !verified
+    ) {
+      paymentStage =
+        "VERIFICATION_INCONSISTENT";
+    } else if (verified) {
+      paymentStage =
+        entitlementApplied
+          ? "SUBSCRIPTION_ACTIVATED"
+          : "PAYMENT_VERIFIED";
+    } else if (storedPaymentFailed) {
+      paymentStage =
+        "CHECKOUT_FAILED";
+    } else if (checkoutReconciled) {
+      paymentStage =
+        "AWAITING_FINANCIAL_VERIFICATION";
+    }
 
     /**
-     * Treat all other states as pending
-     * from the frontend's perspective.
+     * STEP 6 — RETURN SAFE RESPONSE
      */
-    const pending =
-      !verified && !failed;
+
+    const pending = [
+      "PENDING_CHECKOUT",
+      "AWAITING_FINANCIAL_VERIFICATION",
+    ].includes(paymentStage);
+
+    const failed =
+      paymentStage ===
+      "CHECKOUT_FAILED";
 
     return res.status(200).json({
       success: true,
 
       data: {
         payment: {
-          id: payment._id,
+          id:
+            payment._id.toString(),
 
           subscriptionId:
-            payment.subscriptionId,
+            payment.subscriptionId?.toString() ||
+            null,
 
           status:
             payment.status,
 
           verificationStatus:
             payment.verificationStatus,
+
+          paymentStage,
 
           amountMinor:
             payment.amountMinor,
@@ -220,6 +318,10 @@ export const getMyMpesaPaymentStatus = async (
           failed,
 
           entitlementApplied,
+
+          checkoutReconciled,
+
+          manualReviewRequired,
 
           createdAt:
             payment.createdAt,

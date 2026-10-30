@@ -81,24 +81,23 @@ const features = [
 const steps = [
   {
     number: "01",
-    title: "Create an Account",
+    title: "Create Your Account",
     description:
-      "Sign up and set up your PremiumChat profile.",
+      "Join PremiumChat and set up your personal profile.",
   },
   {
     number: "02",
-    title: "Explore Creators",
+    title: "Discover Creators",
     description:
-      "Discover creators and find someone you'd like to connect with.",
+      "Explore creator profiles and discover people who match your interests.",
   },
   {
     number: "03",
-    title: "Start Chatting",
+    title: "Connect Privately",
     description:
-      "Open a creator's profile and start a private conversation.",
+      "Start conversations and explore the experiences available from your favourite creators.",
   },
 ];
-
 /**
  * ============================================================
  * FEATURE CARD
@@ -647,7 +646,14 @@ export default function HomePage() {
           <img
             src="/images/premium-hero.jpg"
             alt=""
-            className="h-full w-full object-cover object-center"
+            fetchPriority="high"
+            decoding="async"
+            className="
+              h-full w-full
+              object-cover
+              object-[65%_center]
+              sm:object-center
+            "
           />
 
           {/* DARK OVERLAYS */}
@@ -718,31 +724,13 @@ export default function HomePage() {
             </div>
 
             {/* HEADLINE */}
-
-            <h1
-              className={[
-                "mt-4",
-                "text-[clamp(2.5rem,5vw,4rem)]",
-                "font-black",
-                "leading-[1.08]",
-                "tracking-[-0.045em]",
-                "text-white",
-              ].join(" ")}
-            >
+            <h1 className="mt-5 max-w-[650px] text-[clamp(2.7rem,5vw,4.5rem)] font-black leading-[1.08] tracking-[-0.045em] text-white">
               Connect With
               <br />
               Your Favourite
               <br />
-              <span
-                className={[
-                  "bg-gradient-to-r",
-                  "from-[#ffe78b]",
-                  "to-[#ffc334]",
-                  "bg-clip-text",
-                  "text-transparent",
-                ].join(" ")}
-              >
-                Creators
+              <span className="bg-gradient-to-r from-[#ffe78b] to-[#ffc334] bg-clip-text text-transparent">
+                Creators.
               </span>
             </h1>
 
@@ -832,13 +820,7 @@ export default function HomePage() {
 
             {/* FEATURES */}
 
-            <div
-              className={[
-                "mt-9 grid gap-3",
-                "sm:grid-cols-3",
-                "lg:mt-10",
-              ].join(" ")}
-            >
+            <div className="mt-9 grid max-w-[650px] gap-3 sm:grid-cols-3 lg:mt-10">
               {features.map((feature) => (
                 <FeatureItem
                   key={feature.title}

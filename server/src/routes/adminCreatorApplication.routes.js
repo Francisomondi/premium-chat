@@ -6,6 +6,8 @@ import { rateLimit } from "express-rate-limit";
 import {
   getPendingCreatorApplications,
   reviewApplication,
+  getAllCreatorApplications,
+  getCreatorApplication,
 } from "../controllers/adminCreatorApplication.controller.js";
 
 import {
@@ -29,28 +31,7 @@ import {
   reviewCreatorApplicationSchema,
 } from "../validators/creatorApplication.validators.js";
 
-/**
- * ============================================================
- * PREMIUMCHAT ADMIN CREATOR APPLICATION ROUTES
- * ============================================================
- *
- * Intended mount point:
- *
- * /api/admin/creator-applications
- *
- * Endpoints:
- *
- * GET   /
- * PATCH /:userId/review
- *
- * Security:
- *
- * - Valid authenticated session required.
- * - Active ADMIN account required.
- * - Review requests require trusted origin.
- * - Request parameters are validated.
- * - Review operations are rate limited.
- */
+
 
 const router = Router();
 
@@ -133,6 +114,32 @@ const listApplicationsQuerySchema = z
   })
   .strict();
 
+  const allApplicationsQuerySchema = z
+  .object({
+    status: z
+      .enum([
+        "ALL",
+        "PENDING",
+        "APPROVED",
+        "REJECTED",
+      ])
+      .default("ALL"),
+
+    page: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .default(1),
+
+    limit: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(100)
+      .default(20),
+  })
+  .strict();
+
 /**
  * ============================================================
  * GET PENDING CREATOR APPLICATIONS
@@ -150,6 +157,33 @@ router.get(
     query: listApplicationsQuerySchema,
   }),
   getPendingCreatorApplications
+);
+
+
+/**
+ * ============================================================
+ * GET ALL CREATOR APPLICATIONS
+ * ============================================================
+ */
+router.get(
+  "/all",
+  validate({
+    query: allApplicationsQuerySchema,
+  }),
+  getAllCreatorApplications
+);
+
+/**
+ * ============================================================
+ * GET CREATOR APPLICATION DETAILS
+ * ============================================================
+ */
+router.get(
+  "/:userId",
+  validate({
+    params: reviewCreatorApplicationParamsSchema,
+  }),
+  getCreatorApplication
 );
 
 /**

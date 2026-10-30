@@ -9,6 +9,10 @@ import {
   getMyMpesaPaymentStatus,
 } from "../controllers/mpesaPayment.controller.js";
 
+import {
+  recoverMyMpesaPayment,
+} from "../controllers/mpesaPaymentRecovery.controller.js";
+
 /**
  * ============================================================
  * PREMIUMCHAT — M-PESA PAYMENT ROUTES
@@ -18,10 +22,7 @@ import {
  *
  * /api/payments/mpesa
  *
- * All endpoints require authentication.
- *
- * No endpoint permits client-controlled
- * payment confirmation or activation.
+ * All routes require authentication.
  */
 
 const router = Router();
@@ -29,9 +30,11 @@ const router = Router();
 router.use(requireAuth);
 
 /**
- * POST /api/payments/mpesa/stk-push
+ * ============================================================
+ * INITIATE M-PESA PAYMENT
+ * ============================================================
  *
- * Initiate a subscription payment.
+ * POST /api/payments/mpesa/stk-push
  */
 
 router.post(
@@ -40,10 +43,28 @@ router.post(
 );
 
 /**
- * GET /api/payments/mpesa/:paymentId/status
+ * ============================================================
+ * RECOVER EXISTING PAYMENT
+ * ============================================================
  *
- * Retrieve the authenticated user's
- * payment status.
+ * GET /api/payments/mpesa/requests/:clientRequestId
+ *
+ * Read-only.
+ *
+ * Does not dispatch another STK Push.
+ */
+
+router.get(
+  "/requests/:clientRequestId",
+  recoverMyMpesaPayment
+);
+
+/**
+ * ============================================================
+ * GET PAYMENT STATUS
+ * ============================================================
+ *
+ * GET /api/payments/mpesa/:paymentId/status
  */
 
 router.get(

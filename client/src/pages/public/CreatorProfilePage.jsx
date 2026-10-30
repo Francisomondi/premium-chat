@@ -1,4 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 
 import {
   Link,
@@ -26,37 +30,66 @@ import {
   getPublicCreatorProfile,
 } from "../../api/creator.api.js";
 
+import {
+  getCreatorSubscriptionAccess,
+} from "../../api/services/paymentAccessService.js";
+
 import { useAuthStore } from "../../store/useAuthStore.js";
+
 import { useChatStore } from "../../store/useChatStore.js";
+
+import CreatorSubscriptionAccess from "../../components/creator/CreatorSubscriptionAccess.jsx";
+
+import CreatorSubscriptionPlans from "../../components/subscriptions/CreatorSubscriptionPlans.jsx";
+
+import MpesaSubscriptionCheckout from "../../components/subscriptions/MpesaSubscriptionCheckout.jsx";
 
 /**
  * ============================================================
  * PREMIUMCHAT — PUBLIC CREATOR PROFILE
  * ============================================================
  *
- * UI CLEANUP 1.4
+ * STEP 19.8.28
  *
- * Improvements:
- * - Compact responsive layout
- * - Smaller typography
- * - Refined creator image
- * - Cleaner verification badge
- * - Compact profile information cards
- * - Improved action buttons
- * - Reduced unnecessary spacing
+ * Features:
  *
- * Preserves:
- * - Public creator profile API
- * - AbortController cancellation
- * - Loading and error states
- * - Retry functionality
- * - Authentication redirect
- * - Start Chat integration
- * - Conversation validation
- * - Self-chat prevention
+ * - Public creator profile
+ * - Creator verification badge
+ * - Authentication-aware chat
+ * - Subscription entitlement verification
+ * - Public subscription plans
+ * - M-Pesa subscription checkout
+ * - Backend-confirmed subscription access
  *
- * No fictional creator statistics or biography.
+ * SECURITY:
+ *
+ * - No client-side payment verification.
+ * - No direct subscription activation.
+ * - Only backend entitlement grants access.
+ * - Stale entitlement responses are rejected.
+ * - Creator self-subscription is blocked.
  */
+
+const ACCESS_STATUS = {
+  ACTIVE: "ACTIVE",
+  INACTIVE: "INACTIVE",
+  UNKNOWN: "UNKNOWN",
+};
+
+/**
+ * ============================================================
+ * HELPERS
+ * ============================================================
+ */
+
+const normalizeId = (value) =>
+  String(value ?? "").trim().toLowerCase();
+
+const isCanceledRequest = (error, signal) =>
+  signal?.aborted === true ||
+  error?.code === "ERR_CANCELED" ||
+  error?.name === "CanceledError" ||
+  error?.name === "AbortError";
 
 /**
  * ============================================================
@@ -106,59 +139,34 @@ function CreatorProfileAvatar({
   avatarUrl,
   displayName,
 }) {
-  const [imageError, setImageError] = useState(false);
+  const [failedImageUrl, setFailedImageUrl] =
+    useState(null);
 
-  useEffect(() => {
-    setImageError(false);
-  }, [avatarUrl]);
+  const imageUrl =
+    typeof avatarUrl === "string"
+      ? avatarUrl.trim()
+      : "";
 
   const hasImage =
-    typeof avatarUrl === "string" &&
-    avatarUrl.trim().length > 0 &&
-    !imageError;
+    imageUrl.length > 0 &&
+    failedImageUrl !== imageUrl;
 
   return (
-    <div
-      className={[
-        "relative",
-        "mx-auto w-full max-w-[340px]",
-        "aspect-[4/5]",
-        "overflow-hidden",
-        "rounded-2xl",
-        "border border-[#ffcc42]/20",
-        "bg-[#15151a]",
-        "shadow-[0_15px_50px_rgba(0,0,0,0.3)]",
-        "md:mx-0",
-      ].join(" ")}
-    >
+    <div className="relative mx-auto aspect-[4/5] w-full max-w-[340px] overflow-hidden rounded-2xl border border-[#ffcc42]/20 bg-[#15151a] shadow-[0_15px_50px_rgba(0,0,0,0.3)] md:mx-0">
       {hasImage ? (
         <img
-          src={avatarUrl}
+          src={imageUrl}
           alt={`${displayName}'s profile`}
+          loading="lazy"
+          decoding="async"
           className="h-full w-full object-cover"
-          onError={() => setImageError(true)}
+          onError={() => {
+            setFailedImageUrl(imageUrl);
+          }}
         />
       ) : (
-        <div
-          className={[
-            "flex h-full w-full",
-            "flex-col items-center justify-center",
-            "bg-gradient-to-br",
-            "from-[#342915]",
-            "via-[#1a1a20]",
-            "to-[#09090c]",
-          ].join(" ")}
-        >
-          <div
-            className={[
-              "flex h-24 w-24",
-              "items-center justify-center",
-              "rounded-full",
-              "border border-[#ffcc42]/25",
-              "bg-[#ffcc42]/10",
-              "sm:h-28 sm:w-28",
-            ].join(" ")}
-          >
+        <div className="flex h-full w-full flex-col items-center justify-center bg-gradient-to-br from-[#342915] via-[#1a1a20] to-[#09090c]">
+          <div className="flex h-24 w-24 items-center justify-center rounded-full border border-[#ffcc42]/25 bg-[#ffcc42]/10 sm:h-28 sm:w-28">
             <UserRound
               size={52}
               strokeWidth={1.2}
@@ -173,11 +181,10 @@ function CreatorProfileAvatar({
         </div>
       )}
 
-      {/* IMAGE GRADIENT */}
-
-      <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent" />
-
-      {/* IMAGE LABEL */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent"
+      />
 
       <div className="absolute bottom-4 left-4 right-4 flex items-center gap-2">
         <Crown
@@ -225,7 +232,7 @@ function CreatorProfileError({
           <button
             type="button"
             onClick={onRetry}
-            className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-[#ffcc42]/40 px-4 text-[12px] font-semibold text-[#ffcc42] transition hover:bg-[#ffcc42]/10"
+            className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-[#ffcc42]/40 px-4 text-[12px] font-semibold text-[#ffcc42] hover:bg-[#ffcc42]/10"
           >
             <RefreshCw size={15} />
             Try Again
@@ -234,7 +241,7 @@ function CreatorProfileError({
 
         <Link
           to="/explore"
-          className="inline-flex min-h-10 items-center gap-2 rounded-lg bg-[#ffcc42] px-4 text-[12px] font-bold text-black transition hover:brightness-110"
+          className="inline-flex min-h-10 items-center gap-2 rounded-lg bg-[#ffcc42] px-4 text-[12px] font-bold text-black hover:brightness-110"
         >
           <ArrowLeft size={15} />
           Explore Creators
@@ -256,26 +263,8 @@ function ProfileInfoCard({
   description,
 }) {
   return (
-    <div
-      className={[
-        "flex items-start gap-3",
-        "rounded-xl",
-        "border border-white/10",
-        "bg-[#15151a]",
-        "p-4",
-        "transition-colors",
-        "hover:border-[#ffcc42]/20",
-      ].join(" ")}
-    >
-      <div
-        className={[
-          "flex h-9 w-9 shrink-0",
-          "items-center justify-center",
-          "rounded-lg",
-          "bg-[#ffcc42]/10",
-          "text-[#ffcc42]",
-        ].join(" ")}
-      >
+    <div className="flex items-start gap-3 rounded-xl border border-white/10 bg-[#15151a] p-4 transition-colors hover:border-[#ffcc42]/20">
+      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#ffcc42]/10 text-[#ffcc42]">
         <Icon size={18} />
       </div>
 
@@ -294,7 +283,7 @@ function ProfileInfoCard({
 
 /**
  * ============================================================
- * PUBLIC CREATOR PROFILE PAGE
+ * PUBLIC CREATOR PROFILE
  * ============================================================
  */
 
@@ -313,7 +302,7 @@ export default function CreatorProfilePage() {
 
   /**
    * ==========================================================
-   * AUTH STORE
+   * AUTHENTICATION
    * ==========================================================
    */
 
@@ -337,6 +326,44 @@ export default function CreatorProfilePage() {
 
   /**
    * ==========================================================
+   * CURRENT USER
+   * ==========================================================
+   */
+
+  const currentUserId = normalizeId(
+    currentUser?._id ?? currentUser?.id
+  );
+
+  const normalizedCreatorId =
+    normalizeId(creatorId);
+
+  const isOwnProfile =
+    Boolean(currentUserId) &&
+    currentUserId === normalizedCreatorId;
+
+  /**
+   * ==========================================================
+   * PROFILE STATE
+   * ==========================================================
+   */
+
+  const [creator, setCreator] =
+    useState(null);
+
+  const [isLoading, setIsLoading] =
+    useState(true);
+
+  const [error, setError] =
+    useState(null);
+
+  const [isNotFound, setIsNotFound] =
+    useState(false);
+
+  const [reloadKey, setReloadKey] =
+    useState(0);
+
+  /**
+   * ==========================================================
    * CHAT STATE
    * ==========================================================
    */
@@ -351,33 +378,51 @@ export default function CreatorProfilePage() {
 
   /**
    * ==========================================================
-   * CURRENT USER
+   * SUBSCRIPTION ACCESS STATE
    * ==========================================================
    */
 
-  const currentUserId = String(
-    currentUser?._id ?? currentUser?.id ?? ""
-  ).toLowerCase();
+  const [accessResult, setAccessResult] =
+    useState({
+      status: ACCESS_STATUS.UNKNOWN,
+      creatorId: null,
+      subscriberId: null,
+      currentPeriodEnd: null,
+    });
 
-  const isOwnProfile =
-    Boolean(currentUserId) &&
-    currentUserId === String(creatorId).toLowerCase();
+  const [accessLoadingKey, setAccessLoadingKey] =
+    useState(null);
+
+  const [accessReloadKey, setAccessReloadKey] =
+    useState(0);
 
   /**
    * ==========================================================
-   * PROFILE STATE
+   * SUBSCRIPTION CHECKOUT STATE
    * ==========================================================
    */
 
-  const [creator, setCreator] = useState(null);
+  const [
+    showSubscriptionPlans,
+    setShowSubscriptionPlans,
+  ] = useState(false);
 
-  const [isLoading, setIsLoading] = useState(true);
+  const [
+    selectedSubscriptionPlan,
+    setSelectedSubscriptionPlan,
+  ] = useState(null);
 
-  const [error, setError] = useState(null);
+  /**
+   * ==========================================================
+   * REFRESH ACCESS
+   * ==========================================================
+   */
 
-  const [isNotFound, setIsNotFound] = useState(false);
-
-  const [reloadKey, setReloadKey] = useState(0);
+  const handleRefreshAccess = () => {
+    setAccessReloadKey(
+      (previous) => previous + 1
+    );
+  };
 
   /**
    * ==========================================================
@@ -386,7 +431,8 @@ export default function CreatorProfilePage() {
    */
 
   useEffect(() => {
-    const controller = new AbortController();
+    const controller =
+      new AbortController();
 
     const fetchCreator = async () => {
       setIsLoading(true);
@@ -396,12 +442,13 @@ export default function CreatorProfilePage() {
       setStartChatError(null);
 
       try {
-        const response = await getPublicCreatorProfile(
-          creatorId,
-          {
-            signal: controller.signal,
-          }
-        );
+        const response =
+          await getPublicCreatorProfile(
+            creatorId,
+            {
+              signal: controller.signal,
+            }
+          );
 
         if (controller.signal.aborted) {
           return;
@@ -419,8 +466,10 @@ export default function CreatorProfilePage() {
         setCreator(fetchedCreator);
       } catch (requestError) {
         if (
-          controller.signal.aborted ||
-          requestError?.code === "ERR_CANCELED"
+          isCanceledRequest(
+            requestError,
+            controller.signal
+          )
         ) {
           return;
         }
@@ -466,20 +515,189 @@ export default function CreatorProfilePage() {
 
   /**
    * ==========================================================
-   * RETRY
+   * SUBSCRIPTION ACCESS VERIFICATION
+   * ==========================================================
+   */
+
+  const loadedCreatorId = normalizeId(
+    creator?.id
+  );
+
+  const canCheckAccess =
+    Boolean(creatorId) &&
+    Boolean(currentUserId) &&
+    Boolean(loadedCreatorId) &&
+    loadedCreatorId === normalizedCreatorId &&
+    isAuthenticated === true &&
+    !isOwnProfile &&
+    !isLoading &&
+    !error;
+
+  const accessIdentityKey =
+    `${normalizedCreatorId}:${currentUserId}:${accessReloadKey}`;
+
+  useEffect(() => {
+    const controller =
+      new AbortController();
+
+    if (!canCheckAccess) {
+      return () => {
+        controller.abort();
+      };
+    }
+
+    const checkAccess = async () => {
+      setAccessLoadingKey(
+        accessIdentityKey
+      );
+
+      setAccessResult({
+        status: ACCESS_STATUS.UNKNOWN,
+        creatorId: normalizedCreatorId,
+        subscriberId: currentUserId,
+        currentPeriodEnd: null,
+      });
+
+      try {
+        const response =
+          await getCreatorSubscriptionAccess(
+            creatorId,
+            {
+              signal: controller.signal,
+            }
+          );
+
+        if (controller.signal.aborted) {
+          return;
+        }
+
+        if (response?.success !== true) {
+          throw new Error(
+            "Subscription verification failed."
+          );
+        }
+
+        const entitlement =
+          response?.entitlement ??
+          response?.data;
+
+        if (
+          !entitlement ||
+          typeof entitlement.hasAccess !==
+            "boolean"
+        ) {
+          throw new Error(
+            "Invalid subscription entitlement response."
+          );
+        }
+
+        const nextStatus =
+          entitlement.hasAccess === true
+            ? ACCESS_STATUS.ACTIVE
+            : ACCESS_STATUS.INACTIVE;
+
+        setAccessResult({
+          status: nextStatus,
+          creatorId: normalizedCreatorId,
+          subscriberId: currentUserId,
+          currentPeriodEnd:
+            entitlement.hasAccess === true
+              ? entitlement.currentPeriodEnd ??
+                null
+              : null,
+        });
+      } catch (requestError) {
+        if (
+          isCanceledRequest(
+            requestError,
+            controller.signal
+          )
+        ) {
+          return;
+        }
+
+        console.error(
+          "[PremiumChat] Subscription access verification:",
+          requestError
+        );
+
+        setAccessResult({
+          status: ACCESS_STATUS.UNKNOWN,
+          creatorId: normalizedCreatorId,
+          subscriberId: currentUserId,
+          currentPeriodEnd: null,
+        });
+      } finally {
+        if (!controller.signal.aborted) {
+          setAccessLoadingKey(null);
+        }
+      }
+    };
+
+    checkAccess();
+
+    return () => {
+      controller.abort();
+    };
+  }, [
+    canCheckAccess,
+    creatorId,
+    normalizedCreatorId,
+    currentUserId,
+    accessIdentityKey,
+  ]);
+
+  /**
+   * ==========================================================
+   * SAFE ACCESS DISPLAY STATE
+   * ==========================================================
+   */
+
+  const accessBelongsToCurrentUser =
+    accessResult.creatorId ===
+      normalizedCreatorId &&
+    accessResult.subscriberId ===
+      currentUserId;
+
+  const accessMatchesCurrentRequest =
+    accessLoadingKey === accessIdentityKey;
+
+  const subscriptionAccess =
+    canCheckAccess &&
+    accessBelongsToCurrentUser &&
+    !accessMatchesCurrentRequest
+      ? accessResult.status
+      : ACCESS_STATUS.UNKNOWN;
+
+  const isCheckingAccess =
+    canCheckAccess &&
+    (
+      accessMatchesCurrentRequest ||
+      !accessBelongsToCurrentUser
+    );
+
+  const currentPeriodEnd =
+    subscriptionAccess ===
+    ACCESS_STATUS.ACTIVE
+      ? accessResult.currentPeriodEnd
+      : null;
+
+  /**
+   * ==========================================================
+   * RETRY PROFILE
    * ==========================================================
    */
 
   const handleRetry = () => {
-    setReloadKey((previous) => previous + 1);
+    setReloadKey(
+      (previous) => previous + 1
+    );
   };
 
   /**
    * ==========================================================
    * START CHAT
    * ==========================================================
-   *
-   * Preserve existing working conversation flow.
    */
 
   const handleStartChat = async () => {
@@ -489,7 +707,11 @@ export default function CreatorProfilePage() {
 
     setStartChatError(null);
 
-    if (!creator?.id || creator.id !== creatorId) {
+    if (
+      !creator?.id ||
+      normalizeId(creator.id) !==
+        normalizedCreatorId
+    ) {
       setStartChatError(
         "Invalid creator profile."
       );
@@ -500,7 +722,8 @@ export default function CreatorProfilePage() {
     if (!isAuthenticated) {
       navigate("/login", {
         state: {
-          from: `${location.pathname}${location.search}`,
+          from:
+            `${location.pathname}${location.search}`,
         },
       });
 
@@ -520,23 +743,29 @@ export default function CreatorProfilePage() {
 
     try {
       const conversation =
-        await openConversationWithCreator(creatorId);
+        await openConversationWithCreator(
+          creatorId
+        );
 
-      const chatState = useChatStore.getState();
+      const chatState =
+        useChatStore.getState();
 
-      const conversationId = String(
-        conversation?._id ?? conversation?.id ?? ""
-      ).toLowerCase();
+      const conversationId =
+        normalizeId(
+          conversation?._id ??
+          conversation?.id
+        );
 
-      const selectedId = String(
-        chatState.activeConversationId ?? ""
-      ).toLowerCase();
+      const selectedId =
+        normalizeId(
+          chatState.activeConversationId
+        );
 
-      const loadedId = String(
-        chatState.activeConversation?._id ??
-          chatState.activeConversation?.id ??
-          ""
-      ).toLowerCase();
+      const loadedId =
+        normalizeId(
+          chatState.activeConversation?._id ??
+          chatState.activeConversation?.id
+        );
 
       if (
         !conversationId ||
@@ -546,7 +775,7 @@ export default function CreatorProfilePage() {
       ) {
         throw new Error(
           chatState.conversationError ||
-            "Unable to open the conversation."
+          "Unable to open the conversation."
         );
       }
 
@@ -554,13 +783,111 @@ export default function CreatorProfilePage() {
     } catch (chatError) {
       setStartChatError(
         chatError?.message ||
-          "Unable to start chat. Please try again."
+        "Unable to start chat. Please try again."
       );
     } finally {
       startingChatRef.current = false;
       setIsStartingChat(false);
     }
   };
+
+  /**
+   * ==========================================================
+   * OPEN SUBSCRIPTION OPTIONS
+   * ==========================================================
+   */
+
+  const handleOpenSubscriptionOptions = () => {
+    if (
+      isOwnProfile ||
+      !creator?.id ||
+      loadedCreatorId !== normalizedCreatorId
+    ) {
+      return;
+    }
+
+    if (!isAuthenticated) {
+      navigate("/login", {
+        state: {
+          from:
+            `${location.pathname}${location.search}`,
+        },
+      });
+
+      return;
+    }
+
+    if (
+      subscriptionAccess ===
+      ACCESS_STATUS.ACTIVE
+    ) {
+      return;
+    }
+
+    setSelectedSubscriptionPlan(null);
+    setShowSubscriptionPlans(true);
+  };
+
+  /**
+   * ==========================================================
+   * SELECT SUBSCRIPTION PLAN
+   * ==========================================================
+   */
+
+  const handleSelectSubscriptionPlan = (
+    plan
+  ) => {
+    if (
+      !plan?._id ||
+      !isAuthenticated ||
+      isOwnProfile
+    ) {
+      return;
+    }
+
+    setSelectedSubscriptionPlan(plan);
+  };
+
+  /**
+   * ==========================================================
+   * CLOSE SUBSCRIPTION CHECKOUT
+   * ==========================================================
+   */
+
+  const handleCloseSubscriptionCheckout = () => {
+    setShowSubscriptionPlans(false);
+    setSelectedSubscriptionPlan(null);
+  };
+
+  /**
+   * ==========================================================
+   * HANDLE CONFIRMED SUBSCRIPTION ACCESS
+   * ==========================================================
+   */
+
+  const handleSubscriptionAccessGranted = () => {
+    // Refresh the authoritative backend entitlement.
+    // Never set hasAccess locally.
+    handleRefreshAccess();
+
+    setShowSubscriptionPlans(false);
+    setSelectedSubscriptionPlan(null);
+  };
+
+  /**
+   * ==========================================================
+   * RESET CHECKOUT WHEN PROFILE OR USER CHANGES
+   * ==========================================================
+   */
+
+  useEffect(() => {
+    setShowSubscriptionPlans(false);
+    setSelectedSubscriptionPlan(null);
+  }, [
+    normalizedCreatorId,
+    currentUserId,
+    isAuthenticated,
+  ]);
 
   /**
    * ==========================================================
@@ -590,7 +917,9 @@ export default function CreatorProfilePage() {
             error || "Creator unavailable."
           }
           onRetry={
-            isNotFound ? undefined : handleRetry
+            isNotFound
+              ? undefined
+              : handleRetry
           }
         />
       </div>
@@ -622,6 +951,14 @@ export default function CreatorProfilePage() {
         })
       : null;
 
+  const showCheckout =
+    showSubscriptionPlans &&
+    isAuthenticated === true &&
+    !isOwnProfile &&
+    loadedCreatorId === normalizedCreatorId &&
+    subscriptionAccess !==
+      ACCESS_STATUS.ACTIVE;
+
   /**
    * ==========================================================
    * RENDER
@@ -634,21 +971,11 @@ export default function CreatorProfilePage() {
 
       <div
         aria-hidden="true"
-        className={[
-          "pointer-events-none absolute",
-          "left-1/2 top-12",
-          "h-72 w-72",
-          "-translate-x-1/2",
-          "rounded-full",
-          "bg-[#ffcc42]/5",
-          "blur-[100px]",
-        ].join(" ")}
+        className="pointer-events-none absolute left-1/2 top-12 h-72 w-72 -translate-x-1/2 rounded-full bg-[#ffcc42]/5 blur-[100px]"
       />
 
       <div className="relative mx-auto max-w-[1120px] px-4 py-7 sm:px-6 sm:py-9 lg:px-8">
-        {/* =============================================== */}
-        {/* BACK NAVIGATION                                 */}
-        {/* =============================================== */}
+        {/* BACK NAVIGATION */}
 
         <Link
           to="/explore"
@@ -658,9 +985,7 @@ export default function CreatorProfilePage() {
           Back to Explore
         </Link>
 
-        {/* =============================================== */}
-        {/* PROFILE LAYOUT                                  */}
-        {/* =============================================== */}
+        {/* PROFILE LAYOUT */}
 
         <div className="grid items-start gap-7 md:grid-cols-[300px_minmax(0,1fr)] lg:gap-10">
           {/* CREATOR IMAGE */}
@@ -675,15 +1000,7 @@ export default function CreatorProfilePage() {
           <div className="min-w-0 py-1">
             {/* CREATOR LABEL */}
 
-            <div
-              className={[
-                "inline-flex items-center gap-2",
-                "rounded-full",
-                "border border-[#ffcc42]/25",
-                "bg-[#ffcc42]/10",
-                "px-3 py-1.5",
-              ].join(" ")}
-            >
+            <div className="inline-flex items-center gap-2 rounded-full border border-[#ffcc42]/25 bg-[#ffcc42]/10 px-3 py-1.5">
               <Crown
                 size={13}
                 className="text-[#ffcc42]"
@@ -702,7 +1019,7 @@ export default function CreatorProfilePage() {
 
             {/* VERIFIED BADGE */}
 
-            {creator.isVerified && (
+            {creator.isVerified === true && (
               <div className="mt-3 flex items-center gap-2">
                 <BadgeCheck
                   size={17}
@@ -719,12 +1036,11 @@ export default function CreatorProfilePage() {
 
             <p className="mt-4 max-w-lg text-[13px] leading-6 text-zinc-400 sm:text-sm">
               Connect with {displayName} through
-              PremiumChat's private messaging experience.
+              PremiumChat&apos;s private messaging
+              experience.
             </p>
 
-            {/* =========================================== */}
-            {/* PROFILE INFORMATION                         */}
-            {/* =========================================== */}
+            {/* PROFILE INFORMATION */}
 
             <div className="mt-6 grid gap-3 sm:grid-cols-2">
               <ProfileInfoCard
@@ -739,6 +1055,82 @@ export default function CreatorProfilePage() {
                 description="Connect through PremiumChat"
               />
             </div>
+
+            {/* SUBSCRIPTION ACCESS */}
+
+            <CreatorSubscriptionAccess
+              accessStatus={subscriptionAccess}
+              currentPeriodEnd={currentPeriodEnd}
+              isLoading={isCheckingAccess}
+              onRefresh={handleRefreshAccess}
+              onSubscribe={
+                handleOpenSubscriptionOptions
+              }
+              isOwnProfile={isOwnProfile}
+            />
+
+            {/* SUBSCRIPTION CHECKOUT */}
+
+            {showCheckout && (
+              <section className="mt-6 space-y-5">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-lg font-bold text-white">
+                      Creator Subscriptions
+                    </h2>
+
+                    <p className="mt-1 text-xs text-zinc-400">
+                      Choose a plan and complete
+                      your subscription securely.
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={
+                      handleCloseSubscriptionCheckout
+                    }
+                    className="rounded-lg border border-white/10 px-4 py-2 text-sm text-zinc-300 transition hover:bg-white/5 hover:text-white"
+                  >
+                    Close
+                  </button>
+                </div>
+
+                {!selectedSubscriptionPlan ? (
+                  <CreatorSubscriptionPlans
+                    creatorId={creatorId}
+                    onSelectPlan={
+                      handleSelectSubscriptionPlan
+                    }
+                  />
+                ) : (
+                  <div className="space-y-4">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedSubscriptionPlan(
+                          null
+                        );
+                      }}
+                      className="inline-flex items-center gap-2 text-sm font-medium text-[#ffcc42] hover:text-[#ffd966]"
+                    >
+                      <ArrowLeft size={16} />
+                      Back to Subscription Plans
+                    </button>
+
+                    <MpesaSubscriptionCheckout
+                      creatorId={creatorId}
+                      plan={
+                        selectedSubscriptionPlan
+                      }
+                      onAccessGranted={
+                        handleSubscriptionAccessGranted
+                      }
+                    />
+                  </div>
+                )}
+              </section>
+            )}
 
             {/* JOINED DATE */}
 
@@ -755,9 +1147,7 @@ export default function CreatorProfilePage() {
               </div>
             )}
 
-            {/* =========================================== */}
-            {/* ACTION BUTTONS                              */}
-            {/* =========================================== */}
+            {/* ACTION BUTTONS */}
 
             <div className="mt-7 flex flex-col gap-3 sm:flex-row">
               {/* START CHAT */}
@@ -765,21 +1155,12 @@ export default function CreatorProfilePage() {
               <button
                 type="button"
                 onClick={handleStartChat}
-                disabled={isStartingChat || isOwnProfile}
+                disabled={
+                  isStartingChat ||
+                  isOwnProfile
+                }
                 aria-busy={isStartingChat}
-                className={[
-                  "inline-flex min-h-11",
-                  "items-center justify-center gap-2",
-                  "rounded-lg",
-                  "bg-[#ffcc42]",
-                  "px-5",
-                  "text-[12px] font-bold",
-                  "text-black",
-                  "transition",
-                  "hover:bg-[#ffd966]",
-                  "disabled:cursor-not-allowed",
-                  "disabled:opacity-50",
-                ].join(" ")}
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-[#ffcc42] px-5 text-[12px] font-bold text-black transition hover:bg-[#ffd966] disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {isStartingChat ? (
                   <>
@@ -805,22 +1186,9 @@ export default function CreatorProfilePage() {
 
               <Link
                 to="/explore"
-                className={[
-                  "inline-flex min-h-11",
-                  "items-center justify-center gap-2",
-                  "rounded-lg",
-                  "border border-white/15",
-                  "bg-white/5",
-                  "px-5",
-                  "text-[12px] font-semibold",
-                  "text-white",
-                  "transition",
-                  "hover:border-[#ffcc42]/50",
-                  "hover:text-[#ffcc42]",
-                ].join(" ")}
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-white/15 bg-white/5 px-5 text-[12px] font-semibold text-white transition hover:border-[#ffcc42]/50 hover:text-[#ffcc42]"
               >
                 <Users size={16} />
-
                 Explore More
               </Link>
             </div>
@@ -847,28 +1215,17 @@ export default function CreatorProfilePage() {
               <span>
                 Private messaging is available to
                 authenticated PremiumChat members.
+                Premium content access is verified
+                separately through the subscription
+                authorization service.
               </span>
             </div>
           </div>
         </div>
 
-        {/* =============================================== */}
-        {/* BOTTOM CTA                                      */}
-        {/* =============================================== */}
+        {/* BOTTOM CTA */}
 
-        <div
-          className={[
-            "mt-12",
-            "rounded-2xl",
-            "border border-[#ffcc42]/15",
-            "bg-gradient-to-r",
-            "from-[#1c1912]",
-            "to-[#111115]",
-            "px-5 py-7",
-            "text-center",
-            "sm:px-8 sm:py-9",
-          ].join(" ")}
-        >
+        <div className="mt-12 rounded-2xl border border-[#ffcc42]/15 bg-gradient-to-r from-[#1c1912] to-[#111115] px-5 py-7 text-center sm:px-8 sm:py-9">
           <Crown
             size={21}
             className="mx-auto text-[#ffcc42]"
@@ -885,19 +1242,10 @@ export default function CreatorProfilePage() {
 
           <Link
             to="/explore"
-            className={[
-              "mt-5 inline-flex min-h-10",
-              "items-center justify-center gap-2",
-              "rounded-lg",
-              "bg-[#ffcc42]",
-              "px-5",
-              "text-[12px] font-bold",
-              "text-black",
-              "transition",
-              "hover:brightness-110",
-            ].join(" ")}
+            className="mt-5 inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-[#ffcc42] px-5 text-[12px] font-bold text-black transition hover:brightness-110"
           >
             Explore Creators
+
             <ArrowRight size={15} />
           </Link>
         </div>

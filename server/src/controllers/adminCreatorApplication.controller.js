@@ -2,6 +2,8 @@
 import {
   listPendingCreatorApplications,
   reviewCreatorApplication,
+  listCreatorApplications,
+  getCreatorApplicationDetails,
 } from "../services/adminCreatorApplication.service.js";
 
 /**
@@ -147,6 +149,87 @@ export const reviewApplication = async (
       success: true,
 
       message,
+
+      data: {
+        application,
+      },
+
+      requestId: req.requestId,
+    });
+  } catch (error) {
+    return next(error);
+  }
+};
+
+/**
+ * ============================================================
+ * GET ALL CREATOR APPLICATIONS
+ * ============================================================
+ *
+ * GET /api/admin/creator-applications/all
+ */
+export const getAllCreatorApplications = async (
+  req,
+  res,
+  next
+) => {
+  try {
+    const adminId = req.auth.userId;
+
+    const query =
+      req.validated?.query ?? req.query;
+
+    const result = await listCreatorApplications({
+      adminId,
+      status: query.status ?? "ALL",
+      page: query.page ?? 1,
+      limit: query.limit ?? 20,
+    });
+
+    return res.status(200).json({
+      success: true,
+
+      message:
+        "Creator applications retrieved successfully.",
+
+      data: result,
+
+      requestId: req.requestId,
+    });
+  } catch (error) {
+    return next(error);
+  }
+};
+
+/**
+ * ============================================================
+ * GET INDIVIDUAL CREATOR APPLICATION
+ * ============================================================
+ *
+ * GET /api/admin/creator-applications/:userId
+ */
+export const getCreatorApplication = async (
+  req,
+  res,
+  next
+) => {
+  try {
+    const adminId = req.auth.userId;
+
+    const params =
+      req.validated?.params ?? req.params;
+
+    const application =
+      await getCreatorApplicationDetails({
+        adminId,
+        userId: params.userId,
+      });
+
+    return res.status(200).json({
+      success: true,
+
+      message:
+        "Creator application retrieved successfully.",
 
       data: {
         application,

@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import {
   createPendingSubscription,
   getMySubscriptions,
@@ -266,83 +267,62 @@ export const cancelMySubscription = async (
 
 /**
  * ============================================================
- * CHECK MY CREATOR SUBSCRIPTION ACCESS
+ * GET MY CREATOR SUBSCRIPTION ACCESS
  * ============================================================
  *
  * GET /api/subscriptions/access/:creatorId
- *
- * Authentication required.
- *
- * Returns whether the authenticated subscriber
- * currently has an eligible subscription
- * to the specified creator.
- *
- * IMPORTANT:
- *
- * This is a read-only entitlement check.
- *
- * It does not:
- *
- * - Confirm payment
- * - Activate subscriptions
- * - Grant access by itself
- * - Modify subscription status
- *
- * Actual premium content authorization
- * must be enforced on protected backend
- * routes in a later module.
  */
 
-/**
- * ============================================================
- * CHECK MY CREATOR SUBSCRIPTION ACCESS
- * ============================================================
- *
- * GET /api/subscriptions/access/:creatorId
- *
- * Uses the same authorization service
- * as protected premium content routes.
- */
+export const getMyCreatorSubscriptionAccess = async (
+  req,
+  res,
+  next
+) => {
+  try {
+    const subscriberId =
+      req.auth?.userId?.toString();
 
-export const getMyCreatorSubscriptionAccess =
-  async (req, res, next) => {
-    try {
-      const subscriberId =
-        req.auth.userId;
+    const { creatorId } = req.params;
 
-      const { creatorId } =
-        req.params;
-
-      const result =
-        await authorizeSubscriberAccess({
-          subscriberId,
-          creatorId,
-        });
-
-      return res.status(200).json({
-        success: true,
-
-        data: {
-          creatorId,
-
-          hasAccess:
-            result.hasAccess,
-
-          reason:
-            result.reason,
-
-          subscriptionId:
-            result.hasAccess
-              ? result.subscription._id
-              : null,
-
-          currentPeriodEnd:
-            result.hasAccess
-              ? result.subscription.currentPeriodEnd
-              : null,
-        },
+    if (!subscriberId) {
+      return res.status(401).json({
+        success: false,
+        message: "Authentication required.",
       });
-    } catch (error) {
-      return next(error);
     }
-  };
+
+    if (!mongoose.isObjectIdOrHexString(creatorId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid creator identifier.",
+      });
+    }
+
+    const result = await authorizeSubscriberAccess({
+      subscriberId,
+      creatorId,
+    });
+
+    const hasAccess = result.authorized === true;
+
+    return res.status(200).json({
+      success: true,
+
+      data: {
+        creatorId,
+        hasAccess,
+        reason: result.reason,
+
+        subscriptionId: hasAccess
+          ? result.subscriptionId
+          : null,
+
+        currentPeriodEnd: hasAccess
+          ? result.expiresAt
+          : null,
+      },
+    });
+  } catch (error) {
+    return next(error);
+  }
+};

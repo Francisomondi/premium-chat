@@ -7,6 +7,8 @@ import authRoutes from "./routes/auth.routes.js";
 import creatorApplicationRoutes from "./routes/creatorApplication.routes.js";
 
 import adminCreatorApplicationRoutes from "./routes/adminCreatorApplication.routes.js";
+import adminCreatorProfileRoutes from "./routes/adminCreatorProfile.routes.js";
+
 
 import conversationRoutes from "./routes/conversation.routes.js";
 
@@ -19,11 +21,16 @@ import publicCreatorSubscriptionPlanRoutes from "./routes/publicCreatorSubscript
 import mpesaTransactionStatusRoutes from "./routes/mpesaTransactionStatus.routes.js";
 
 
+
+
 import subscriberSubscriptionRoutes from "./routes/subscriberSubscription.routes.js";
 
 import creatorSubscriberRoutes from "./routes/creatorSubscriber.routes.js";
 import mpesaPaymentRoutes from "./routes/mpesaPayment.routes.js";
 import mpesaCallbackRoutes from "./routes/mpesaCallback.routes.js";
+import paymentAccessRoutes from "./routes/paymentAccess.routes.js";
+
+
 
 import { env } from "./config/env.js";
 
@@ -191,6 +198,22 @@ app.use(
   adminCreatorApplicationRoutes
 );
 
+/**
+ * ============================================================
+ * ADMIN CREATOR PROFILE ROUTES
+ * ============================================================
+ *
+ * GET /admin/creator-profiles
+ * GET /admin/creator-profiles/:creatorId
+ *
+ * Protected by:
+ * - requireAuth
+ * - requireAdmin
+ */
+app.use(
+  `${env.API_PREFIX}/admin/creator-profiles`,
+  adminCreatorProfileRoutes
+);
 /*
  * ============================================================
  * CONVERSATION ROUTES
@@ -284,10 +307,15 @@ app.use(
   mpesaCallbackRoutes
 );
 
+app.use("/api", paymentAccessRoutes);
+
+
 app.use(
   "/api/payments/mpesa/transaction-status",
   mpesaTransactionStatusRoutes
 );
+
+
 
 /*
  * ============================================================

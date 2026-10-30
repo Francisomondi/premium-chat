@@ -10,6 +10,7 @@ import {
   ArrowRight,
   Crown,
   Sparkles,
+  Users,
 } from "lucide-react";
 
 import CreatorGrid from "./CreatorGrid.jsx";
@@ -20,24 +21,27 @@ import {
 
 /**
  * ============================================================
- * PREMIUMCHAT — POPULAR CREATORS
+ * PREMIUMCHAT — FEATURED CREATORS
  * ============================================================
  *
- * STEP 4.2.4
+ * STEP 19.4
  *
  * Features:
- * - Fetch approved creators
+ * - Fetch eligible public creators
  * - Display responsive creator cards
+ * - Preserve existing CreatorGrid
  * - Loading skeletons
- * - Empty state
- * - Error handling
+ * - Empty and error states
  * - Retry functionality
- * - Abort pending requests on unmount
+ * - Abort pending requests
+ * - Responsive premium design
  *
- * Note:
- * Current ordering is newest eligible creators.
- * Popularity ranking will require engagement metrics.
+ * NOTE:
+ * Creators are currently sorted by newest.
+ * Genuine popularity ranking requires engagement data.
  */
+
+const FEATURED_CREATOR_LIMIT = 6;
 
 export default function PopularCreators() {
   /**
@@ -56,7 +60,7 @@ export default function PopularCreators() {
 
   /**
    * ==========================================================
-   * LOAD CREATORS
+   * RETRY HANDLER
    * ==========================================================
    */
 
@@ -66,7 +70,7 @@ export default function PopularCreators() {
 
   /**
    * ==========================================================
-   * FETCH CREATORS
+   * FETCH FEATURED CREATORS
    * ==========================================================
    */
 
@@ -80,7 +84,7 @@ export default function PopularCreators() {
       try {
         const response = await getPublicCreators({
           page: 1,
-          limit: 6,
+          limit: FEATURED_CREATOR_LIMIT,
           sort: "newest",
           signal: controller.signal,
         });
@@ -102,13 +106,20 @@ export default function PopularCreators() {
       } catch (requestError) {
         if (
           controller.signal.aborted ||
-          requestError?.code === "ERR_CANCELED"
+          requestError?.code === "ERR_CANCELED" ||
+          requestError?.name === "CanceledError" ||
+          requestError?.name === "AbortError"
         ) {
           return;
         }
 
+        console.error(
+          "[PremiumChat] Creator discovery failed:",
+          requestError
+        );
+
         setError(
-          "Unable to load creators."
+          "We couldn't load creators right now. Please try again."
         );
 
         setCreators([]);
@@ -135,55 +146,156 @@ export default function PopularCreators() {
   return (
     <section
       id="popular-creators"
-      className="relative overflow-hidden bg-[#09090c] py-16 sm:py-20 lg:py-24"
+      aria-labelledby="featured-creators-title"
+      className="
+        relative
+        overflow-hidden
+        border-t border-white/5
+        bg-[#09090c]
+        py-14
+        sm:py-16
+        lg:py-20
+      "
     >
-      {/* BACKGROUND DECORATION */}
+      {/* BACKGROUND GLOW */}
 
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute left-1/2 top-0 h-80 w-80 -translate-x-1/2 rounded-full bg-[#ffcc42]/5 blur-[120px]"
+        className="
+          pointer-events-none
+          absolute
+          left-1/2 top-0
+          h-80 w-80
+          -translate-x-1/2
+          rounded-full
+          bg-[#ffcc42]/5
+          blur-[120px]
+        "
       />
 
-      <div className="relative mx-auto max-w-[1500px] px-4 sm:px-6 lg:px-10">
+      <div
+        className="
+          relative
+          mx-auto
+          max-w-[1280px]
+          px-4
+          sm:px-6
+          lg:px-8
+        "
+      >
         {/* ============================================= */}
-        {/* SECTION HEADING                               */}
+        {/* SECTION HEADER                                */}
         {/* ============================================= */}
 
-        <div className="mb-8 flex flex-col gap-5 sm:mb-10 sm:flex-row sm:items-end sm:justify-between">
-          <div>
+        <div
+          className="
+            mb-8
+            flex flex-col
+            gap-5
+            sm:mb-10
+            sm:flex-row
+            sm:items-end
+            sm:justify-between
+          "
+        >
+          <div className="max-w-2xl">
+            {/* EYEBROW */}
+
             <div className="mb-3 flex items-center gap-2">
               <Crown
-                size={17}
+                size={16}
                 className="text-[#ffcc42]"
+                aria-hidden="true"
               />
 
-              <span className="text-[11px] font-bold uppercase tracking-[0.2em] text-[#ffcc42]">
+              <span
+                className="
+                  text-[11px]
+                  font-bold
+                  uppercase
+                  tracking-[0.2em]
+                  text-[#ffcc42]
+                "
+              >
                 Discover PremiumChat
               </span>
             </div>
 
-            <h2 className="text-3xl font-extrabold tracking-tight text-white sm:text-4xl lg:text-[42px]">
-              Popular{" "}
+            {/* TITLE */}
+
+            <h2
+              id="featured-creators-title"
+              className="
+                text-[28px]
+                font-extrabold
+                tracking-tight
+                text-white
+                sm:text-[34px]
+                lg:text-[38px]
+              "
+            >
+              Featured{" "}
               <span className="text-[#ffcc42]">
                 Creators
               </span>
             </h2>
 
-            <p className="mt-3 max-w-xl text-sm leading-7 text-zinc-400 sm:text-base">
-              Discover verified creators and explore
-              exclusive connections.
+            {/* DESCRIPTION */}
+
+            <p
+              className="
+                mt-3
+                max-w-xl
+                text-[13px]
+                leading-6
+                text-zinc-400
+                sm:text-sm
+              "
+            >
+              Explore creator profiles, discover
+              interesting personalities, and find
+              your next great conversation.
             </p>
           </div>
 
-          {/* VIEW ALL CREATORS */}
+          {/* VIEW ALL */}
 
           <Link
             to="/explore"
-            className="inline-flex w-fit items-center gap-2 rounded-lg border border-[#ffcc42]/40 px-4 py-2.5 text-xs font-semibold text-[#ffcc42] transition hover:border-[#ffcc42] hover:bg-[#ffcc42]/10 sm:text-sm"
+            className="
+              group
+              inline-flex
+              w-fit
+              shrink-0
+              items-center
+              justify-center
+              gap-2
+              rounded-full
+              border border-[#ffcc42]/35
+              bg-[#ffcc42]/5
+              px-5 py-2.5
+              text-[12px]
+              font-semibold
+              text-[#ffcc42]
+              transition-all
+              hover:border-[#ffcc42]
+              hover:bg-[#ffcc42]/10
+              focus-visible:outline
+              focus-visible:outline-2
+              focus-visible:outline-offset-2
+              focus-visible:outline-[#ffcc42]
+            "
           >
-            View All Creators
+            Explore All Creators
 
-            <ArrowRight size={16} />
+            <ArrowRight
+              size={15}
+              className="
+                transition-transform
+                group-hover:translate-x-1
+              "
+              aria-hidden="true"
+            />
           </Link>
         </div>
 
@@ -196,26 +308,68 @@ export default function PopularCreators() {
           isLoading={isLoading}
           error={error}
           onRetry={loadCreators}
-          skeletonCount={6}
+          skeletonCount={FEATURED_CREATOR_LIMIT}
         />
 
         {/* ============================================= */}
-        {/* BOTTOM DECORATION                             */}
+        {/* BOTTOM CONTENT                                */}
         {/* ============================================= */}
 
         {!isLoading &&
           !error &&
           creators.length > 0 && (
-            <div className="mt-10 flex items-center justify-center gap-2 text-xs text-zinc-500">
-              <Sparkles
-                size={15}
-                className="text-[#ffcc42]"
-              />
+            <div
+              className="
+                mt-10
+                flex flex-col
+                items-center
+                justify-between
+                gap-4
+                border-t border-white/10
+                pt-6
+                text-center
+                sm:flex-row
+                sm:text-left
+              "
+            >
+              <div className="flex items-center gap-2">
+                <Sparkles
+                  size={16}
+                  className="text-[#ffcc42]"
+                  aria-hidden="true"
+                />
 
-              <span>
-                Discover genuine connections with
-                verified creators.
-              </span>
+                <p className="text-xs text-zinc-400">
+                  Discover genuine connections
+                  with creators.
+                </p>
+              </div>
+
+              <Link
+                to="/explore"
+                className="
+                  inline-flex
+                  items-center
+                  gap-2
+                  text-xs
+                  font-semibold
+                  text-[#ffcc42]
+                  transition
+                  hover:text-[#ffe27a]
+                "
+              >
+                <Users
+                  size={15}
+                  aria-hidden="true"
+                />
+
+                Discover More
+
+                <ArrowRight
+                  size={14}
+                  aria-hidden="true"
+                />
+              </Link>
             </div>
           )}
       </div>

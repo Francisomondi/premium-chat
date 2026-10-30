@@ -14,35 +14,44 @@ import {
  * PREMIUMCHAT — CREATOR CARD
  * ============================================================
  *
- * STEP 4.2.3
- *
- * Reusable creator card.
+ * STEP 19.5
  *
  * Features:
+ * - Premium black-and-gold design
+ * - Full-card navigation
  * - Real creator data
- * - Responsive portrait layout
  * - Verified creator badge
- * - Image fallback
- * - Hover effects
- * - Black-and-gold styling
- * - Accessible navigation
- */
-
-/**
- * ============================================================
- * CREATOR CARD
- * ============================================================
+ * - Responsive portrait images
+ * - Image loading fallback
+ * - Accessible creator links
+ * - Consistent card proportions
+ * - Smooth hover transitions
+ *
+ * No mock creator information.
  */
 
 export default function CreatorCard({
   creator,
   className = "",
 }) {
-  const [imageError, setImageError] = useState(false);
+  /**
+   * ==========================================================
+   * IMAGE STATE
+   * ==========================================================
+   */
+
+  const [failedImageUrl, setFailedImageUrl] =
+    useState(null);
 
   if (!creator?.id) {
     return null;
   }
+
+  /**
+   * ==========================================================
+   * CREATOR INFORMATION
+   * ==========================================================
+   */
 
   const {
     id,
@@ -57,17 +66,23 @@ export default function CreatorCard({
       ? displayName.trim()
       : "PremiumChat Creator";
 
+  const imageUrl =
+    typeof avatarUrl === "string"
+      ? avatarUrl.trim()
+      : "";
+
   const hasImage =
-    typeof avatarUrl === "string" &&
-    avatarUrl.trim().length > 0 &&
-    !imageError;
+    imageUrl.length > 0 &&
+    failedImageUrl !== imageUrl;
+
+  const profilePath =
+    `/creators/${encodeURIComponent(String(id))}`;
 
   /**
-   * Profile navigation will become active when
-   * /creators/:creatorId is registered in Step 4.2.5.
+   * ==========================================================
+   * RENDER
+   * ==========================================================
    */
-
-  const profilePath = `/creators/${encodeURIComponent(id)}`;
 
   return (
     <article
@@ -79,144 +94,236 @@ export default function CreatorCard({
         "bg-[#15151a]",
         "transition-all duration-300",
         "hover:-translate-y-1",
-        "hover:border-[#ffcc42]/70",
-        "hover:shadow-[0_12px_35px_rgba(255,204,66,0.12)]",
+        "hover:border-[#ffcc42]/60",
+        "hover:shadow-[0_15px_40px_rgba(255,204,66,0.10)]",
+        "focus-within:border-[#ffcc42]",
+        "focus-within:ring-2",
+        "focus-within:ring-[#ffcc42]/30",
         className,
-      ].join(" ")}
+      ]
+        .filter(Boolean)
+        .join(" ")}
     >
-      {/* =============================================== */}
-      {/* CREATOR IMAGE                                   */}
-      {/* =============================================== */}
+      {/* ============================================= */}
+      {/* FULL-CARD NAVIGATION                          */}
+      {/* ============================================= */}
 
-      <div className="relative aspect-[3/4] w-full overflow-hidden">
+      <Link
+        to={profilePath}
+        aria-label={`View ${name}'s profile`}
+        className="
+          absolute inset-0 z-20
+          rounded-2xl
+          focus-visible:outline
+          focus-visible:outline-2
+          focus-visible:outline-offset-2
+          focus-visible:outline-[#ffcc42]
+        "
+      >
+        <span className="sr-only">
+          View {name}'s profile
+        </span>
+      </Link>
+
+      {/* ============================================= */}
+      {/* CREATOR IMAGE                                 */}
+      {/* ============================================= */}
+
+      <div
+        className="
+          relative
+          aspect-[3/4]
+          w-full
+          overflow-hidden
+          bg-[#101014]
+        "
+      >
         {hasImage ? (
           <img
-            src={avatarUrl}
+            src={imageUrl}
             alt={`${name}'s profile`}
             loading="lazy"
             decoding="async"
-            onError={() => setImageError(true)}
-            className={[
-              "h-full w-full object-cover",
-              "transition-transform duration-500",
-              "group-hover:scale-105",
-            ].join(" ")}
+            onError={() => {
+              setFailedImageUrl(imageUrl);
+            }}
+            className="
+              h-full w-full
+              object-cover
+              transition-transform
+              duration-500
+              group-hover:scale-105
+            "
           />
         ) : (
           <div
-            className={[
-              "flex h-full w-full",
-              "flex-col items-center justify-center",
-              "bg-gradient-to-br",
-              "from-[#2d2417]",
-              "via-[#19191e]",
-              "to-[#09090c]",
-            ].join(" ")}
+            className="
+              flex h-full w-full
+              flex-col
+              items-center
+              justify-center
+              bg-gradient-to-br
+              from-[#2d2417]
+              via-[#19191e]
+              to-[#09090c]
+            "
           >
-            <div className="flex h-20 w-20 items-center justify-center rounded-full border border-[#ffcc42]/20 bg-[#ffcc42]/10 sm:h-24 sm:w-24">
+            <div
+              className="
+                flex h-16 w-16
+                items-center justify-center
+                rounded-full
+                border border-[#ffcc42]/20
+                bg-[#ffcc42]/10
+                sm:h-20 sm:w-20
+              "
+            >
               <UserRound
-                size={42}
+                size={38}
                 strokeWidth={1.2}
                 className="text-[#ffcc42]/70"
+                aria-hidden="true"
               />
             </div>
 
             <Crown
-              size={18}
-              className="mt-5 text-[#ffcc42]/40"
+              size={17}
+              className="mt-4 text-[#ffcc42]/40"
+              aria-hidden="true"
             />
           </div>
         )}
 
-        {/* ============================================= */}
-        {/* GRADIENT OVERLAY                              */}
-        {/* ============================================= */}
+        {/* =========================================== */}
+        {/* IMAGE GRADIENT                              */}
+        {/* =========================================== */}
 
         <div
-          className={[
-            "pointer-events-none absolute inset-0",
-            "bg-gradient-to-t",
-            "from-black via-black/20 to-transparent",
-          ].join(" ")}
+          aria-hidden="true"
+          className="
+            pointer-events-none
+            absolute inset-0
+            bg-gradient-to-t
+            from-black
+            via-black/15
+            to-transparent
+          "
         />
 
-        {/* ============================================= */}
-        {/* VERIFIED BADGE                                */}
-        {/* ============================================= */}
+        {/* =========================================== */}
+        {/* VERIFIED BADGE                              */}
+        {/* =========================================== */}
 
-        {isVerified && (
+        {isVerified === true && (
           <div
-            className={[
-              "absolute right-2 top-2",
-              "flex items-center gap-1",
-              "rounded-full",
-              "border border-[#ffcc42]/30",
-              "bg-black/65",
-              "px-2 py-1",
-              "backdrop-blur-md",
-            ].join(" ")}
             title="Verified creator"
+            className="
+              absolute
+              right-2 top-2
+              z-10
+              flex items-center
+              gap-1
+              rounded-full
+              border border-[#ffcc42]/30
+              bg-black/75
+              px-2 py-1
+              backdrop-blur-md
+            "
           >
             <BadgeCheck
               size={13}
               className="text-[#ffcc42]"
+              aria-hidden="true"
             />
 
-            <span className="hidden text-[10px] font-semibold text-[#ffcc42] sm:inline">
+            <span
+              className="
+                hidden
+                text-[10px]
+                font-semibold
+                text-[#ffcc42]
+                sm:inline
+              "
+            >
               Verified
             </span>
           </div>
         )}
 
-        {/* ============================================= */}
-        {/* CREATOR NAME                                  */}
-        {/* ============================================= */}
+        {/* =========================================== */}
+        {/* CREATOR DETAILS                             */}
+        {/* =========================================== */}
 
-        <div className="absolute bottom-0 left-0 right-0 p-3 sm:p-4">
+        <div
+          className="
+            absolute
+            bottom-0 left-0 right-0
+            z-10
+            p-3
+            sm:p-4
+          "
+        >
           <h3
-            className={[
-              "truncate",
-              "text-sm font-bold text-white",
-              "sm:text-base",
-            ].join(" ")}
             title={name}
+            className="
+              truncate
+              text-sm
+              font-bold
+              text-white
+              sm:text-base
+            "
           >
             {name}
           </h3>
 
-          <p className="mt-1 text-[11px] text-zinc-300 sm:text-xs">
+          <p
+            className="
+              mt-1
+              text-[11px]
+              text-zinc-300
+              sm:text-xs
+            "
+          >
             PremiumChat Creator
           </p>
         </div>
       </div>
 
-      {/* =============================================== */}
-      {/* CARD FOOTER                                     */}
-      {/* =============================================== */}
+      {/* ============================================= */}
+      {/* CARD FOOTER                                   */}
+      {/* ============================================= */}
 
       <div className="p-2.5 sm:p-3">
-        <Link
-          to={profilePath}
-          aria-label={`View ${name}'s profile`}
-          className={[
-            "flex w-full items-center justify-center",
-            "gap-1.5 rounded-lg",
-            "border border-[#ffcc42]/50",
-            "bg-[#ffcc42]/10",
-            "px-2 py-2",
-            "text-[11px] font-semibold",
-            "text-[#ffcc42]",
-            "transition-all duration-200",
-            "hover:border-[#ffcc42]",
-            "hover:bg-[#ffcc42]",
-            "hover:text-black",
-            "sm:text-xs",
-          ].join(" ")}
+        <div
+          aria-hidden="true"
+          className="
+            flex min-h-9
+            w-full
+            items-center
+            justify-center
+            gap-2
+            rounded-lg
+            border border-[#ffcc42]/40
+            bg-[#ffcc42]/10
+            px-3 py-2
+            text-[11px]
+            font-semibold
+            text-[#ffcc42]
+            transition-all
+            duration-200
+            group-hover:border-[#ffcc42]
+            group-hover:bg-[#ffcc42]
+            group-hover:text-black
+            sm:text-xs
+          "
         >
           View Profile
 
-          <ArrowUpRight size={14} />
-        </Link>
+          <ArrowUpRight
+            size={15}
+            aria-hidden="true"
+          />
+        </div>
       </div>
     </article>
   );

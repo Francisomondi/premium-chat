@@ -4,6 +4,7 @@ import PaymentTransaction from "../models/PaymentTransaction.model.js";
 
 import MpesaFinancialVerification, {
   FINANCIAL_VERIFICATION_STATUSES,
+  FINANCIAL_EVIDENCE_SOURCES,
 } from "../models/MpesaFinancialVerification.model.js";
 
 import {
@@ -12,49 +13,40 @@ import {
   PAYMENT_VERIFICATION_STATUSES,
 } from "../constants/payment.constants.js";
 
-import {
-  inspectMpesaFinancialVerification,
-} from "./mpesaFinancialVerification.service.js";
-
 /**
  * ============================================================
  * PREMIUMCHAT — PAYMENT VERIFICATION SERVICE
  * ============================================================
  *
- * Module 4.3.5.7.8.13.17.3
+ * STEP 19.8.9
  *
  * Responsibilities:
  *
  * - Validate payment identifiers.
  * - Inspect stored payment verification state.
- * - Inspect M-Pesa financial verification records.
- * - Detect inconsistent verification records.
- * - Preserve the trusted provider verification gate.
+ * - Inspect financial verification records.
+ * - Require matching settlement evidence.
+ * - Require provider-settlement evidence provenance.
+ * - Return a verified payment only when all checks pass.
  *
  * SECURITY:
  *
- * - Database records alone are not authoritative
- *   proof of provider settlement.
- *
- * - Callback success is not payment verification.
- *
- * - STK Push acceptance is not payment verification.
- *
- * - A stored VERIFIED status must not automatically
- *   authorize subscription activation.
- *
- * - No subscription activation occurs here.
+ * - Does not initiate payments.
+ * - Does not record settlements.
+ * - Does not activate subscriptions.
+ * - Does not trust client-supplied payment evidence.
+ * - Does not grant access from callbacks or STK responses.
  *
  * IMPORTANT:
  *
- * This service remains fail-closed until an
- * authenticated financial settlement integration
- * is implemented.
+ * This service relies on the trusted settlement-recording
+ * workflow being the exclusive writer of authoritative
+ * verification records.
  */
 
 /**
  * ============================================================
- * VALIDATION HELPERS
+ * HELPERS
  * ============================================================
  */
 
@@ -66,51 +58,51 @@ const validDate = (value) =>
   value instanceof Date &&
   !Number.isNaN(value.getTime());
 
+const sameId = (left, right) =>
+  Boolean(left && right) &&
+  left.toString() === right.toString();
+
+const validString = (value) =>
+  typeof value === "string" &&
+  value.trim().length > 0;
+
+const deny = (reason) => ({
+  verified: false,
+  reason,
+  payment: null,
+});
+
 /**
  * ============================================================
- * CHECK VERIFIED PAYMENT RECORD
+ * CHECK STORED VERIFIED PAYMENT STATE
  * ============================================================
- *
- * This helper only checks database state.
- *
- * It does not establish independent provider
- * verification.
  */
 
-export const hasStoredVerifiedPaymentState =
-  (payment) => {
-    if (!payment) {
-      return false;
-    }
+export const hasStoredVerifiedPaymentState = (
+  payment
+) => {
+  if (!payment) {
+    return false;
+  }
 
-    return (
-      payment.status ===
-        PAYMENT_STATUSES.SUCCEEDED &&
-      payment.verificationStatus ===
-        PAYMENT_VERIFICATION_STATUSES.VERIFIED &&
-      validDate(payment.verifiedAt) &&
-      validDate(payment.paidAt)
-    );
-  };
+  return (
+    payment.status ===
+      PAYMENT_STATUSES.SUCCEEDED &&
+    payment.verificationStatus ===
+      PAYMENT_VERIFICATION_STATUSES.VERIFIED &&
+    validDate(payment.verifiedAt) &&
+    validDate(payment.paidAt)
+  );
+};
 
 /**
  * ============================================================
- * INSPECT FINANCIAL VERIFICATION CONSISTENCY
+ * INSPECT PAYMENT VERIFICATION CONSISTENCY
  * ============================================================
- *
- * This function detects mismatches between:
- *
- * - PaymentTransaction
- * - MpesaFinancialVerification
- *
- * It does not independently authenticate
- * financial settlement evidence.
  */
 
 export const inspectPaymentVerificationConsistency =
-  async ({
-    paymentId,
-  } = {}) => {
+  async ({ paymentId } = {}) => {
     if (!isValidPaymentId(paymentId)) {
       return {
         consistent: false,
@@ -119,9 +111,7 @@ export const inspectPaymentVerificationConsistency =
     }
 
     const payment =
-      await PaymentTransaction.findById(
-        paymentId
-      );
+      await PaymentTransaction.findById(paymentId);
 
     if (!payment) {
       return {
@@ -131,8 +121,7 @@ export const inspectPaymentVerificationConsistency =
     }
 
     if (
-      payment.provider !==
-      PAYMENT_PROVIDERS.MPESA
+      payment.provider !== PAYMENT_PROVIDERS.MPESA
     ) {
       return {
         consistent: false,
@@ -174,9 +163,43 @@ export const inspectPaymentVerificationConsistency =
       };
     }
 
+    /**
+     * Require evidence recorded through the
+     * authenticated provider settlement workflow.
+     */
+
     if (
-      financialVerification.subscriptionId.toString() !==
-      payment.subscriptionId?.toString()
+      financialVerification.evidenceSource !==
+      FINANCIAL_EVIDENCE_SOURCES.PROVIDER_SETTLEMENT
+    ) {
+      return {
+        consistent: false,
+        reason:
+          "AUTHORITATIVE_SETTLEMENT_SOURCE_REQUIRED",
+      };
+    }
+
+    if (
+      !validString(
+        financialVerification.evidenceReference
+      )
+    ) {
+      return {
+        consistent: false,
+        reason:
+          "SETTLEMENT_EVIDENCE_REFERENCE_MISSING",
+      };
+    }
+
+    if (
+      !sameId(
+        financialVerification.paymentId,
+        payment._id
+      ) ||
+      !sameId(
+        financialVerification.subscriptionId,
+        payment.subscriptionId
+      )
     ) {
       return {
         consistent: false,
@@ -186,8 +209,9 @@ export const inspectPaymentVerificationConsistency =
     }
 
     if (
+      !validString(payment.providerTransactionId) ||
       financialVerification.providerTransactionId !==
-      payment.providerTransactionId
+        payment.providerTransactionId
     ) {
       return {
         consistent: false,
@@ -197,8 +221,9 @@ export const inspectPaymentVerificationConsistency =
     }
 
     if (
+      !validString(payment.providerReceipt) ||
       financialVerification.mpesaReceiptNumber !==
-      payment.providerReceipt
+        payment.providerReceipt
     ) {
       return {
         consistent: false,
@@ -241,9 +266,7 @@ export const inspectPaymentVerificationConsistency =
       };
     }
 
-    if (
-      !hasStoredVerifiedPaymentState(payment)
-    ) {
+    if (!hasStoredVerifiedPaymentState(payment)) {
       return {
         consistent: false,
         reason:
@@ -251,16 +274,36 @@ export const inspectPaymentVerificationConsistency =
       };
     }
 
+    /**
+     * The recorded transaction enquiry receipt
+     * must match the settled payment receipt.
+     */
+
+    const enquiryReceipt =
+      payment.transactionStatusEnquiry?.receiptNumber;
+
+    if (
+      !validString(enquiryReceipt) ||
+      enquiryReceipt !== payment.providerReceipt
+    ) {
+      return {
+        consistent: false,
+        reason:
+          "SETTLEMENT_ENQUIRY_RECEIPT_MISMATCH",
+      };
+    }
+
     return {
       consistent: true,
 
-      paymentId:
-        payment._id.toString(),
+      paymentId: payment._id.toString(),
 
       financialVerificationId:
         financialVerification._id.toString(),
 
       reason: null,
+
+      payment,
     };
   };
 
@@ -269,86 +312,59 @@ export const inspectPaymentVerificationConsistency =
  * VERIFY PAYMENT TRANSACTION
  * ============================================================
  *
- * This function is called by the subscription
- * payment application service.
+ * Read-only verification gate.
  *
- * A consistency check is NOT equivalent to
- * an authenticated provider settlement check.
+ * Returns the payment state inspected alongside
+ * its corresponding financial verification record.
  *
- * Therefore, it must not return verified:true
- * until a trusted settlement adapter is
- * implemented and integrated.
+ * IMPORTANT:
+ *
+ * This function verifies stored evidence consistency.
+ *
+ * It does not independently authenticate a
+ * settlement with Safaricom.
+ *
+ * Only trusted settlement-recording workflows
+ * may create authoritative financial evidence.
  */
 
 export const verifyPaymentTransaction = async ({
   paymentId,
 } = {}) => {
   if (!isValidPaymentId(paymentId)) {
-    return {
-      verified: false,
-      reason: "INVALID_PAYMENT_ID",
-      payment: null,
-    };
+    return deny("INVALID_PAYMENT_ID");
   }
-
-  const payment =
-    await PaymentTransaction.findById(
-      paymentId
-    );
-
-  if (!payment) {
-    return {
-      verified: false,
-      reason: "PAYMENT_NOT_FOUND",
-      payment: null,
-    };
-  }
-
-  if (
-    payment.provider !==
-    PAYMENT_PROVIDERS.MPESA
-  ) {
-    return {
-      verified: false,
-      reason: "PROVIDER_NOT_SUPPORTED",
-      payment: null,
-    };
-  }
-
-  /**
-   * Check stored financial verification
-   * information for diagnostic purposes.
-   */
 
   const consistency =
     await inspectPaymentVerificationConsistency({
-      paymentId:
-        payment._id.toString(),
+      paymentId,
     });
 
   if (!consistency.consistent) {
-    return {
-      verified: false,
-      reason: consistency.reason,
-      payment: null,
-    };
+    return deny(consistency.reason);
   }
 
-  /**
-   * Even internally consistent database
-   * records do not independently prove
-   * settlement with Safaricom.
-   *
-   * Do not return verified:true here.
-   */
+  const payment = consistency.payment;
+
+  if (!payment) {
+    return deny(
+      "VERIFIED_PAYMENT_RECORD_MISSING"
+    );
+  }
+
+  if (!hasStoredVerifiedPaymentState(payment)) {
+    return deny(
+      "PAYMENT_VERIFICATION_STATE_INVALID"
+    );
+  }
 
   return {
-    verified: false,
+    verified: true,
 
     reason:
-      "AUTHORITATIVE_PROVIDER_VERIFICATION_NOT_CONFIGURED",
+      "AUTHORITATIVE_SETTLEMENT_RECORD_VERIFIED",
 
-    payment: null,
+    payment,
   };
 };
 

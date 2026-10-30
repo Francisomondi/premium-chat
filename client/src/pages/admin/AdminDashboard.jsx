@@ -12,6 +12,9 @@ import {
 import Card from "../../components/ui/Card.jsx";
 import PendingCreatorApplications from "../../components/admin/PendingCreatorApplications.jsx";
 import { useAuthStore } from "../../store/useAuthStore.js";
+import AdminCreatorProfiles from "../../components/admin/AdminCreatorProfiles.jsx";
+
+import CreatorApplicationHistory from "../../components/admin/CreatorApplicationHistory.jsx";
 
 /**
  * ============================================================
@@ -240,9 +243,16 @@ export default function AdminDashboard() {
         {isActiveAdmin && (
           <div
             id="creator-application-reviews"
-            className="mt-10"
+            className="mt-10 space-y-10"
           >
+            {/* Pending applications */}
             <PendingCreatorApplications />
+
+            {/* Application history */}
+            <CreatorApplicationHistory />
+
+            {/* Approved creator profiles */}
+            <AdminCreatorProfiles />
           </div>
         )}
 

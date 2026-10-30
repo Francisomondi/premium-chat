@@ -6,15 +6,15 @@ import {
 } from "react-router-dom";
 
 import {
-  Search,
-  Users,
-  Crown,
+  ArrowRight,
   ChevronLeft,
   ChevronRight,
-  X,
+  Crown,
+  Search,
   ShieldCheck,
   Sparkles,
-  ArrowRight,
+  Users,
+  X,
 } from "lucide-react";
 
 import CreatorGrid from "../../components/creator/CreatorGrid.jsx";
@@ -27,30 +27,34 @@ import { useAuthStore } from "../../store/useAuthStore.js";
 
 /**
  * ============================================================
- * PREMIUMCHAT — EXPLORE CREATORS PAGE
+ * PREMIUMCHAT — EXPLORE CREATORS
  * ============================================================
  *
- * UI CLEANUP 1.3
+ * STEP 19.6
  *
- * Improvements:
- * - Compact hero section
- * - Smaller typography
- * - Responsive search
- * - Cleaner results header
- * - Compact pagination
+ * Features:
+ * - Public creator discovery
+ * - URL-synchronized search
+ * - Backend pagination
+ * - Newest-first sorting
+ * - Responsive creator grid
+ * - Request cancellation
+ * - Retry functionality
+ * - Loading and empty states
  * - Authentication-aware CTA
  *
  * Preserves:
- * - Existing creator discovery API
- * - URL search parameters
- * - Pagination
- * - Request cancellation
- * - Loading/error states
- * - Retry functionality
+ * - Existing creator API
  * - Existing CreatorGrid
+ * - Existing authentication store
+ * - Existing URL query parameters
+ *
+ * No mock creator records.
  */
 
 const PAGE_LIMIT = 12;
+
+const MAX_SEARCH_LENGTH = 100;
 
 const DEFAULT_PAGINATION = {
   page: 1,
@@ -61,17 +65,32 @@ const DEFAULT_PAGINATION = {
   hasPreviousPage: false,
 };
 
+const SORT_OPTIONS = [
+  {
+    value: "newest",
+    label: "Newest First",
+  },
+];
+
+/**
+ * ============================================================
+ * PAGE COMPONENT
+ * ============================================================
+ */
+
 export default function ExplorePage() {
   /**
    * ==========================================================
-   * URL SEARCH PARAMETERS
+   * SEARCH PARAMETERS
    * ==========================================================
    */
 
   const [searchParams, setSearchParams] =
     useSearchParams();
 
-  const searchQuery = searchParams.get("q") || "";
+  const searchQuery = (
+    searchParams.get("q") || ""
+  ).trim().slice(0, MAX_SEARCH_LENGTH);
 
   const requestedPage = Number(
     searchParams.get("page") || 1
@@ -82,6 +101,9 @@ export default function ExplorePage() {
     requestedPage > 0
       ? requestedPage
       : 1;
+
+  // Only enable sorting modes supported by the backend.
+  const sort = "newest";
 
   /**
    * ==========================================================
@@ -116,7 +138,7 @@ export default function ExplorePage() {
 
   /**
    * ==========================================================
-   * SYNC SEARCH INPUT WITH NAVBAR
+   * SYNC SEARCH INPUT WITH URL
    * ==========================================================
    */
 
@@ -137,12 +159,17 @@ export default function ExplorePage() {
       setIsLoading(true);
       setError(null);
 
+      // Prevent showing results from a previous query
+      // while the new request is loading.
+      setCreators([]);
+      setPagination(DEFAULT_PAGINATION);
+
       try {
         const response = await getPublicCreators({
           page: currentPage,
           limit: PAGE_LIMIT,
           search: searchQuery,
-          sort: "newest",
+          sort,
           signal: controller.signal,
         });
 
@@ -158,24 +185,30 @@ export default function ExplorePage() {
           );
         }
 
-        setCreators(result.creators);
-
-        setPagination(
+        const nextPagination =
           result.pagination || {
             ...DEFAULT_PAGINATION,
             page: currentPage,
-          }
-        );
+          };
+
+        setCreators(result.creators);
+
+        setPagination({
+          ...DEFAULT_PAGINATION,
+          ...nextPagination,
+        });
       } catch (requestError) {
         if (
           controller.signal.aborted ||
-          requestError?.code === "ERR_CANCELED"
+          requestError?.code === "ERR_CANCELED" ||
+          requestError?.name === "CanceledError" ||
+          requestError?.name === "AbortError"
         ) {
           return;
         }
 
         console.error(
-          "Explore creators error:",
+          "[PremiumChat] Explore creators:",
           requestError
         );
 
@@ -197,7 +230,7 @@ export default function ExplorePage() {
     return () => {
       controller.abort();
     };
-  }, [currentPage, searchQuery, reloadKey]);
+  }, [currentPage, searchQuery, sort, reloadKey]);
 
   /**
    * ==========================================================
@@ -208,7 +241,9 @@ export default function ExplorePage() {
   const handleSearch = (event) => {
     event.preventDefault();
 
-    const normalizedQuery = searchInput.trim();
+    const normalizedQuery = searchInput
+      .trim()
+      .slice(0, MAX_SEARCH_LENGTH);
 
     const nextParams = new URLSearchParams();
 
@@ -216,6 +251,7 @@ export default function ExplorePage() {
       nextParams.set("q", normalizedQuery);
     }
 
+    // Searching starts at page 1.
     setSearchParams(nextParams);
   };
 
@@ -233,14 +269,16 @@ export default function ExplorePage() {
 
   /**
    * ==========================================================
-   * CHANGE PAGE
+   * PAGINATION
    * ==========================================================
    */
 
   const handlePageChange = (nextPage) => {
     if (
+      !Number.isSafeInteger(nextPage) ||
       nextPage < 1 ||
-      nextPage > pagination.totalPages
+      nextPage > pagination.totalPages ||
+      nextPage === currentPage
     ) {
       return;
     }
@@ -251,7 +289,9 @@ export default function ExplorePage() {
       nextParams.set("q", searchQuery);
     }
 
-    nextParams.set("page", String(nextPage));
+    if (nextPage > 1) {
+      nextParams.set("page", String(nextPage));
+    }
 
     setSearchParams(nextParams);
 
@@ -273,6 +313,38 @@ export default function ExplorePage() {
 
   /**
    * ==========================================================
+   * RESULT INFORMATION
+   * ==========================================================
+   */
+
+  const totalCreators = Number.isFinite(
+    Number(pagination.total)
+  )
+    ? Math.max(0, Number(pagination.total))
+    : 0;
+
+  const totalPages = Number.isSafeInteger(
+    Number(pagination.totalPages)
+  )
+    ? Math.max(0, Number(pagination.totalPages))
+    : 0;
+
+  const hasPreviousPage =
+    pagination.hasPreviousPage === true;
+
+  const hasNextPage =
+    pagination.hasNextPage === true;
+
+  const resultsDescription = isLoading
+    ? "Loading creators..."
+    : error
+      ? "Creator discovery is temporarily unavailable."
+      : searchQuery
+        ? `${totalCreators} creator(s) found for "${searchQuery}"`
+        : `${totalCreators} creator(s) available`;
+
+  /**
+   * ==========================================================
    * RENDER
    * ==========================================================
    */
@@ -284,45 +356,30 @@ export default function ExplorePage() {
       {/* ================================================= */}
 
       <section className="relative overflow-hidden border-b border-white/10">
-        {/* DECORATIVE GLOW */}
+        {/* BACKGROUND GLOW */}
 
         <div
           aria-hidden="true"
-          className={[
-            "pointer-events-none absolute",
-            "left-1/2 top-0",
-            "h-64 w-64",
-            "-translate-x-1/2",
-            "rounded-full",
-            "bg-[#ffcc42]/10",
-            "blur-[100px]",
-          ].join(" ")}
+          className="
+            pointer-events-none
+            absolute left-1/2 top-0
+            h-64 w-64
+            -translate-x-1/2
+            rounded-full
+            bg-[#ffcc42]/10
+            blur-[100px]
+          "
         />
 
-        <div
-          className={[
-            "relative mx-auto",
-            "max-w-[1280px]",
-            "px-4 pb-10 pt-11",
-            "sm:px-6 sm:pb-12 sm:pt-14",
-            "lg:px-8",
-          ].join(" ")}
-        >
+        <div className="relative mx-auto max-w-[1280px] px-4 pb-10 pt-12 sm:px-6 sm:pb-12 sm:pt-16 lg:px-8">
           <div className="mx-auto max-w-2xl text-center">
             {/* EYEBROW */}
 
-            <div
-              className={[
-                "inline-flex items-center gap-2",
-                "rounded-full",
-                "border border-[#ffcc42]/20",
-                "bg-[#ffcc42]/5",
-                "px-3 py-1.5",
-              ].join(" ")}
-            >
+            <div className="inline-flex items-center gap-2 rounded-full border border-[#ffcc42]/20 bg-[#ffcc42]/5 px-3 py-1.5">
               <Crown
-                size={13}
+                size={14}
                 className="text-[#ffcc42]"
+                aria-hidden="true"
               />
 
               <span className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#ffcc42]">
@@ -332,16 +389,7 @@ export default function ExplorePage() {
 
             {/* TITLE */}
 
-            <h1
-              className={[
-                "mt-4",
-                "text-[30px]",
-                "font-extrabold",
-                "tracking-tight",
-                "sm:text-[36px]",
-                "lg:text-[42px]",
-              ].join(" ")}
-            >
+            <h1 className="mt-5 text-[32px] font-extrabold tracking-tight sm:text-[40px] lg:text-[46px]">
               Explore{" "}
               <span className="text-[#ffcc42]">
                 Creators
@@ -350,31 +398,31 @@ export default function ExplorePage() {
 
             {/* DESCRIPTION */}
 
-            <p className="mx-auto mt-3 max-w-xl text-[13px] leading-6 text-zinc-400 sm:text-sm">
-              Discover verified creators, explore their
-              profiles, and start private conversations.
+            <p className="mx-auto mt-4 max-w-xl text-[13px] leading-7 text-zinc-400 sm:text-sm">
+              Discover creators, explore their profiles,
+              and find people you'd love to connect with.
             </p>
 
-            {/* SEARCH */}
+            {/* SEARCH FORM */}
 
             <form
               onSubmit={handleSearch}
               role="search"
-              className={[
-                "mx-auto mt-7",
-                "flex max-w-xl",
-                "items-center gap-2",
-                "rounded-xl",
-                "border border-white/15",
-                "bg-[#17171c]",
-                "p-1.5",
-                "transition-colors",
-                "focus-within:border-[#ffcc42]/60",
-              ].join(" ")}
+              className="
+                mx-auto mt-8
+                flex max-w-xl items-center gap-2
+                rounded-xl
+                border border-white/15
+                bg-[#17171c]
+                p-1.5
+                transition-colors
+                focus-within:border-[#ffcc42]/60
+              "
             >
               <Search
-                size={17}
+                size={18}
                 className="ml-2 shrink-0 text-[#ffcc42]"
+                aria-hidden="true"
               />
 
               <input
@@ -383,19 +431,18 @@ export default function ExplorePage() {
                 onChange={(event) =>
                   setSearchInput(event.target.value)
                 }
-                placeholder="Search creators by name..."
+                placeholder="Search creators..."
                 aria-label="Search creators"
-                maxLength={100}
-                className={[
-                  "min-w-0 flex-1",
-                  "bg-transparent",
-                  "px-1 py-2",
-                  "text-[12px]",
-                  "text-white",
-                  "outline-none",
-                  "placeholder:text-zinc-500",
-                  "sm:text-[13px]",
-                ].join(" ")}
+                maxLength={MAX_SEARCH_LENGTH}
+                className="
+                  min-w-0 flex-1
+                  bg-transparent
+                  px-1 py-2
+                  text-xs text-white
+                  outline-none
+                  placeholder:text-zinc-500
+                  sm:text-sm
+                "
               />
 
               {searchInput && (
@@ -403,25 +450,31 @@ export default function ExplorePage() {
                   type="button"
                   onClick={handleClearSearch}
                   aria-label="Clear search"
-                  className="rounded-lg p-1.5 text-zinc-400 transition hover:bg-white/10 hover:text-white"
+                  className="rounded-lg p-2 text-zinc-400 transition hover:bg-white/10 hover:text-white"
                 >
-                  <X size={15} />
+                  <X
+                    size={16}
+                    aria-hidden="true"
+                  />
                 </button>
               )}
 
               <button
                 type="submit"
-                className={[
-                  "shrink-0",
-                  "rounded-lg",
-                  "bg-[#ffcc42]",
-                  "px-3 py-2",
-                  "text-[11px]",
-                  "font-bold text-black",
-                  "transition",
-                  "hover:brightness-110",
-                  "sm:px-5 sm:text-xs",
-                ].join(" ")}
+                className="
+                  shrink-0 rounded-lg
+                  bg-[#ffcc42]
+                  px-4 py-2.5
+                  text-xs font-bold
+                  text-black
+                  transition
+                  hover:brightness-110
+                  focus-visible:outline
+                  focus-visible:outline-2
+                  focus-visible:outline-offset-2
+                  focus-visible:outline-[#ffcc42]
+                  sm:px-6
+                "
               >
                 Search
               </button>
@@ -429,14 +482,15 @@ export default function ExplorePage() {
 
             {/* TRUST LABEL */}
 
-            <div className="mt-4 flex items-center justify-center gap-2 text-[11px] text-zinc-500">
+            <div className="mt-5 flex items-center justify-center gap-2 text-[11px] text-zinc-500">
               <ShieldCheck
                 size={14}
                 className="text-[#ffcc42]"
+                aria-hidden="true"
               />
 
               <span>
-                Approved and age-verified creators
+                Discover approved creator profiles
               </span>
             </div>
           </div>
@@ -448,21 +502,18 @@ export default function ExplorePage() {
       {/* ================================================= */}
 
       <section
-        className={[
-          "mx-auto max-w-[1280px]",
-          "px-4 py-9",
-          "sm:px-6 sm:py-12",
-          "lg:px-8",
-        ].join(" ")}
+        aria-labelledby="creator-results-title"
+        className="mx-auto max-w-[1280px] px-4 py-10 sm:px-6 sm:py-12 lg:px-8"
       >
         {/* RESULTS HEADER */}
 
-        <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div className="mb-7 flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <div className="mb-2 flex items-center gap-2">
               <Sparkles
                 size={14}
                 className="text-[#ffcc42]"
+                aria-hidden="true"
               />
 
               <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#ffcc42]">
@@ -470,38 +521,102 @@ export default function ExplorePage() {
               </span>
             </div>
 
-            <h2 className="text-xl font-bold sm:text-2xl">
+            <h2
+              id="creator-results-title"
+              className="text-xl font-bold sm:text-2xl"
+            >
               {searchQuery
                 ? "Search Results"
                 : "Discover Creators"}
             </h2>
 
-            <p className="mt-2 text-[12px] leading-5 text-zinc-400 sm:text-[13px]">
-              {isLoading
-                ? "Loading creators..."
-                : error
-                  ? "Creator discovery is temporarily unavailable."
-                  : searchQuery
-                    ? `${pagination.total} creator(s) found for "${searchQuery}"`
-                    : `${pagination.total} verified creator(s) available`}
+            <p
+              role="status"
+              aria-live="polite"
+              className="mt-2 text-xs leading-6 text-zinc-400 sm:text-[13px]"
+            >
+              {resultsDescription}
             </p>
           </div>
 
-          {!searchQuery && (
-            <div className="flex items-center gap-2 text-[11px] text-zinc-500">
-              <Users
-                size={14}
-                className="text-[#ffcc42]"
-              />
+          {/* SORT CONTROL */}
 
-              <span>
-                Verified Creator Community
-              </span>
-            </div>
-          )}
+          <div className="flex items-center gap-3">
+            <label
+              htmlFor="creator-sort"
+              className="text-xs font-medium text-zinc-400"
+            >
+              Sort by
+            </label>
+
+            <select
+              id="creator-sort"
+              value={sort}
+              disabled={SORT_OPTIONS.length === 1}
+              onChange={() => {}}
+              className="
+                rounded-lg
+                border border-white/15
+                bg-[#17171c]
+                px-3 py-2
+                text-xs text-white
+                outline-none
+                focus:border-[#ffcc42]/60
+                disabled:cursor-default
+                disabled:opacity-75
+              "
+            >
+              {SORT_OPTIONS.map((option) => (
+                <option
+                  key={option.value}
+                  value={option.value}
+                >
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
 
-        {/* EXISTING CREATOR GRID */}
+        {/* ACTIVE SEARCH */}
+
+        {searchQuery && (
+          <div className="mb-6 flex flex-wrap items-center gap-2">
+            <span className="text-xs text-zinc-500">
+              Searching for:
+            </span>
+
+            <button
+              type="button"
+              onClick={handleClearSearch}
+              className="
+                inline-flex items-center gap-2
+                rounded-full
+                border border-[#ffcc42]/25
+                bg-[#ffcc42]/10
+                px-3 py-1.5
+                text-xs text-[#ffcc42]
+                transition
+                hover:border-[#ffcc42]/60
+              "
+            >
+              <span className="max-w-[220px] truncate">
+                {searchQuery}
+              </span>
+
+              <X
+                size={13}
+                aria-hidden="true"
+              />
+
+              <span className="sr-only">
+                Clear search
+              </span>
+            </button>
+          </div>
+        )}
+
+        {/* CREATOR GRID */}
 
         <CreatorGrid
           creators={creators}
@@ -517,78 +632,88 @@ export default function ExplorePage() {
 
         {!isLoading &&
           !error &&
-          pagination.totalPages > 1 && (
+          totalPages > 1 && (
             <nav
               aria-label="Creator pagination"
-              className={[
-                "mt-9 flex flex-col",
-                "items-center justify-between",
-                "gap-4",
-                "border-t border-white/10",
-                "pt-6",
-                "sm:flex-row",
-              ].join(" ")}
+              className="
+                mt-10
+                flex flex-col items-center
+                justify-between gap-4
+                border-t border-white/10
+                pt-6
+                sm:flex-row
+              "
             >
-              <p className="text-[12px] text-zinc-400">
+              <p className="text-xs text-zinc-400">
                 Page{" "}
                 <span className="font-semibold text-white">
                   {pagination.page}
                 </span>{" "}
                 of{" "}
                 <span className="font-semibold text-white">
-                  {pagination.totalPages}
+                  {totalPages}
                 </span>
               </p>
 
               <div className="flex items-center gap-2">
+                {/* PREVIOUS */}
+
                 <button
                   type="button"
                   onClick={() =>
                     handlePageChange(currentPage - 1)
                   }
-                  disabled={
-                    !pagination.hasPreviousPage
-                  }
-                  className={[
-                    "inline-flex items-center gap-1.5",
-                    "rounded-lg",
-                    "border border-white/15",
-                    "px-3 py-2",
-                    "text-[11px] font-semibold",
-                    "text-white",
-                    "transition",
-                    "hover:border-[#ffcc42]/50",
-                    "disabled:cursor-not-allowed",
-                    "disabled:opacity-40",
-                  ].join(" ")}
+                  disabled={!hasPreviousPage}
+                  className="
+                    inline-flex items-center gap-2
+                    rounded-lg
+                    border border-white/15
+                    px-4 py-2.5
+                    text-xs font-semibold
+                    text-white
+                    transition
+                    hover:border-[#ffcc42]/50
+                    disabled:cursor-not-allowed
+                    disabled:opacity-40
+                  "
                 >
-                  <ChevronLeft size={15} />
+                  <ChevronLeft
+                    size={16}
+                    aria-hidden="true"
+                  />
+
                   Previous
                 </button>
+
+                {/* NEXT */}
 
                 <button
                   type="button"
                   onClick={() =>
                     handlePageChange(currentPage + 1)
                   }
-                  disabled={!pagination.hasNextPage}
-                  className={[
-                    "inline-flex items-center gap-1.5",
-                    "rounded-lg",
-                    "border border-[#ffcc42]/50",
-                    "bg-[#ffcc42]/10",
-                    "px-3 py-2",
-                    "text-[11px] font-semibold",
-                    "text-[#ffcc42]",
-                    "transition",
-                    "hover:bg-[#ffcc42]",
-                    "hover:text-black",
-                    "disabled:cursor-not-allowed",
-                    "disabled:opacity-40",
-                  ].join(" ")}
+                  disabled={!hasNextPage}
+                  className="
+                    inline-flex items-center gap-2
+                    rounded-lg
+                    border border-[#ffcc42]/50
+                    bg-[#ffcc42]/10
+                    px-4 py-2.5
+                    text-xs font-semibold
+                    text-[#ffcc42]
+                    transition
+                    hover:bg-[#ffcc42]
+                    hover:text-black
+                    disabled:cursor-not-allowed
+                    disabled:opacity-40
+                  "
                 >
                   Next
-                  <ChevronRight size={15} />
+
+                  <ChevronRight
+                    size={16}
+                    aria-hidden="true"
+                  />
                 </button>
               </div>
             </nav>
@@ -599,55 +724,64 @@ export default function ExplorePage() {
         {/* ================================================= */}
 
         <div
-          className={[
-            "mt-12",
-            "rounded-2xl",
-            "border border-[#ffcc42]/15",
-            "bg-gradient-to-r",
-            "from-[#1c1912]",
-            "to-[#111115]",
-            "px-5 py-7",
-            "text-center",
-            "sm:px-8 sm:py-9",
-          ].join(" ")}
+          className="
+            mt-12
+            rounded-2xl
+            border border-[#ffcc42]/15
+            bg-gradient-to-r
+            from-[#1c1912]
+            to-[#111115]
+            px-5 py-8
+            text-center
+            sm:px-8 sm:py-10
+          "
         >
           <Crown
-            size={21}
+            size={22}
             className="mx-auto text-[#ffcc42]"
+            aria-hidden="true"
           />
 
-          <h3 className="mt-3 text-lg font-bold sm:text-xl">
+          <h3 className="mt-4 text-xl font-bold">
             {isAuthenticated
               ? "Ready to Connect?"
               : "Join the PremiumChat Community"}
           </h3>
 
-          <p className="mx-auto mt-2 max-w-lg text-[12px] leading-6 text-zinc-400 sm:text-[13px]">
+          <p className="mx-auto mt-3 max-w-lg text-[13px] leading-6 text-zinc-400">
             {isAuthenticated
-              ? "Explore creator profiles and start a private conversation."
-              : "Create your account to connect with verified creators through private conversations."}
+              ? "Discover creator profiles and start meaningful private conversations."
+              : "Create your PremiumChat account and discover a new way to connect with creators."}
           </p>
 
           <Link
-            to={isAuthenticated ? "/messages" : "/register"}
-            className={[
-              "mt-5 inline-flex",
-              "min-h-10",
-              "items-center justify-center gap-2",
-              "rounded-lg",
-              "bg-[#ffcc42]",
-              "px-5",
-              "text-[12px] font-bold",
-              "text-black",
-              "transition",
-              "hover:brightness-110",
-            ].join(" ")}
+            to={
+              isAuthenticated
+                ? "/messages"
+                : "/register"
+            }
+            className="
+              mt-6
+              inline-flex min-h-11
+              items-center justify-center
+              gap-2
+              rounded-full
+              bg-[#ffcc42]
+              px-6
+              text-xs font-bold
+              text-black
+              transition
+              hover:brightness-110
+            "
           >
             {isAuthenticated
               ? "Open Messages"
               : "Join PremiumChat"}
 
-            <ArrowRight size={15} />
+            <ArrowRight
+              size={16}
+              aria-hidden="true"
+            />
           </Link>
         </div>
       </section>

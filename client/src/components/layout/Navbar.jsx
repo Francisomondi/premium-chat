@@ -234,6 +234,27 @@ export default function Navbar() {
     location.hash,
   ]);
 
+  useEffect(() => {
+  if (!menuOpen) {
+    return;
+  }
+
+  const handleEscape = (event) => {
+    if (event.key === "Escape") {
+      setMenuOpen(false);
+    }
+  };
+
+  window.addEventListener("keydown", handleEscape);
+
+  return () => {
+    window.removeEventListener(
+      "keydown",
+      handleEscape
+    );
+  };
+}, [menuOpen]);
+
   /**
    * ==========================================================
    * CREATOR SEARCH
@@ -583,7 +604,15 @@ export default function Navbar() {
    * ==========================================================
    */
 
-  return (
+return (
+  <>
+    <a
+      href="#main-content"
+      className="sr-only fixed left-4 top-4 z-[100] rounded-lg bg-[#ffcc42] px-4 py-2 font-semibold text-black focus:not-sr-only"
+    >
+      Skip to main content
+    </a>
+
     <header className="sticky top-0 z-50 border-b border-white/10 bg-[#08080b]/95 backdrop-blur-xl">
       {/* ================================================= */}
       {/* MAIN NAVBAR                                       */}
@@ -689,6 +718,7 @@ export default function Navbar() {
           </div>
         </nav>
       )}
-    </header>
+        </header>
+  </>
   );
 }

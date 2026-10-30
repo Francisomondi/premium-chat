@@ -1,33 +1,20 @@
-
 import axiosInstance from "../axiosInstance.js";
 
 /**
  * ============================================================
- * PREMIUMCHAT ADMIN CREATOR APPLICATION SERVICE
+ * PREMIUMCHAT ADMIN CREATOR APPLICATION API SERVICE
  * ============================================================
- *
- * Handles administrator requests for reviewing
- * creator applications.
- *
- * Uses the existing Axios instance:
- *
- * - Configured API base URL
- * - HTTP-only authentication cookies
- * - Centralized error normalization
- * - Request timeout
- *
- * All administrator permissions are verified
- * independently by the backend.
  */
 
 const ADMIN_APPLICATION_BASE =
   "/admin/creator-applications";
 
-/**
- * ============================================================
- * VALIDATION HELPERS
- * ============================================================
- */
+const APPLICATION_STATUSES = [
+  "ALL",
+  "PENDING",
+  "APPROVED",
+  "REJECTED",
+];
 
 const validatePagination = (page, limit) => {
   if (!Number.isInteger(page) || page < 1) {
@@ -42,7 +29,7 @@ const validatePagination = (page, limit) => {
     limit > 100
   ) {
     throw new RangeError(
-      "Limit must be an integer between 1 and 100."
+      "Limit must be between 1 and 100."
     );
   }
 };
@@ -61,33 +48,10 @@ const validateApplicantId = (userId) => {
 };
 
 /**
- * ============================================================
- * GET PENDING CREATOR APPLICATIONS
- * ============================================================
+ * GET PENDING APPLICATIONS
  *
  * GET /api/admin/creator-applications
- *
- * Query parameters:
- *
- * page: integer >= 1
- * limit: integer between 1 and 100
- *
- * Backend returns:
- *
- * {
- *   success: true,
- *   data: {
- *     applications: [...],
- *     pagination: {
- *       page,
- *       limit,
- *       total,
- *       totalPages
- *     }
- *   }
- * }
  */
-
 export const getPendingCreatorApplications = async ({
   page = 1,
   limit = 20,
@@ -97,7 +61,39 @@ export const getPendingCreatorApplications = async ({
   const response = await axiosInstance.get(
     ADMIN_APPLICATION_BASE,
     {
+      params: { page, limit },
+    }
+  );
+
+  return response.data;
+};
+
+/**
+ * GET ALL APPLICATIONS
+ *
+ * GET /api/admin/creator-applications/all
+ *
+ * Optional status:
+ * ALL | PENDING | APPROVED | REJECTED
+ */
+export const getAllCreatorApplications = async ({
+  status = "ALL",
+  page = 1,
+  limit = 20,
+} = {}) => {
+  validatePagination(page, limit);
+
+  if (!APPLICATION_STATUSES.includes(status)) {
+    throw new TypeError(
+      "Invalid creator application status."
+    );
+  }
+
+  const response = await axiosInstance.get(
+    `${ADMIN_APPLICATION_BASE}/all`,
+    {
       params: {
+        status,
         page,
         limit,
       },
@@ -108,32 +104,32 @@ export const getPendingCreatorApplications = async ({
 };
 
 /**
- * ============================================================
- * REVIEW CREATOR APPLICATION
- * ============================================================
+ * GET APPLICATION DETAILS
+ *
+ * GET /api/admin/creator-applications/:userId
+ */
+export const getCreatorApplication = async (userId) => {
+  const validUserId = validateApplicantId(userId);
+
+  const response = await axiosInstance.get(
+    `${ADMIN_APPLICATION_BASE}/${validUserId}`
+  );
+
+  return response.data;
+};
+
+/**
+ * REVIEW APPLICATION
  *
  * PATCH /api/admin/creator-applications/:userId/review
- *
- * Valid decisions:
- *
- * APPROVE
- * REJECT
- *
- * The backend performs an atomic review and
- * prevents reviewing an application twice.
  */
-
 const reviewCreatorApplication = async ({
   userId,
   decision,
 }) => {
-  const validUserId =
-    validateApplicantId(userId);
+  const validUserId = validateApplicantId(userId);
 
-  if (
-    decision !== "APPROVE" &&
-    decision !== "REJECT"
-  ) {
+  if (!["APPROVE", "REJECT"].includes(decision)) {
     throw new TypeError(
       "Decision must be APPROVE or REJECT."
     );
@@ -141,66 +137,32 @@ const reviewCreatorApplication = async ({
 
   const response = await axiosInstance.patch(
     `${ADMIN_APPLICATION_BASE}/${validUserId}/review`,
-    {
-      decision,
-    }
+    { decision }
   );
 
   return response.data;
 };
 
-/**
- * ============================================================
- * APPROVE CREATOR APPLICATION
- * ============================================================
- *
- * On successful backend approval:
- *
- * - Application status becomes APPROVED.
- * - Applicant role becomes CREATOR.
- *
- * This does not bypass age verification.
- */
-
 export const approveCreatorApplication = async (
   userId
-) => {
-  return reviewCreatorApplication({
+) =>
+  reviewCreatorApplication({
     userId,
     decision: "APPROVE",
   });
-};
-
-/**
- * ============================================================
- * REJECT CREATOR APPLICATION
- * ============================================================
- *
- * On successful backend rejection:
- *
- * - Application status becomes REJECTED.
- * - Applicant role remains USER.
- *
- * Reapplication is not currently supported.
- */
 
 export const rejectCreatorApplication = async (
   userId
-) => {
-  return reviewCreatorApplication({
+) =>
+  reviewCreatorApplication({
     userId,
     decision: "REJECT",
   });
-};
-
-/**
- * ============================================================
- * ADMIN CREATOR APPLICATION SERVICE EXPORT
- * ============================================================
- */
 
 const adminCreatorApplicationService = {
   getPendingCreatorApplications,
+  getAllCreatorApplications,
+  getCreatorApplication,
   approveCreatorApplication,
   rejectCreatorApplication,
 };

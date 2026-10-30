@@ -1,4 +1,3 @@
-
 import "dotenv/config";
 
 import { createServer } from "node:http";
@@ -17,24 +16,81 @@ import {
   closeSocketServer,
 } from "./socket/socket.server.js";
 
+import {
+  startMpesaStkReconciliationWorker,
+  stopMpesaStkReconciliationWorker,
+} from "./workers/mpesaStkReconciliation.worker.js";
+
 /**
  * ============================================================
- * PREMIUMCHAT HTTP + SOCKET.IO SERVER
+ * PREMIUMCHAT — HTTP + SOCKET.IO SERVER
  * ============================================================
  *
- * Express and Socket.IO share the same HTTP server.
+ * STEP 19.8.15.5
  *
- * Socket authentication will be implemented in
- * Module 3.2. Until then, all socket connections
- * are rejected by the Socket.IO middleware.
+ * Responsibilities:
+ *
+ * - Connect MongoDB.
+ * - Initialize Socket.IO.
+ * - Start HTTP server.
+ * - Start M-Pesa reconciliation worker.
+ * - Handle server errors.
+ * - Gracefully shut down all services.
+ *
+ * STARTUP ORDER:
+ *
+ * 1. MongoDB
+ * 2. Socket.IO
+ * 3. HTTP server
+ * 4. M-Pesa reconciliation worker
+ *
+ * SHUTDOWN ORDER:
+ *
+ * 1. Stop M-Pesa worker
+ * 2. Close Socket.IO
+ * 3. Close HTTP server
+ * 4. Disconnect MongoDB
+ *
+ * SECURITY:
+ *
+ * - Worker never activates subscriptions directly.
+ * - Worker never trusts callback financial claims.
+ * - Worker uses authenticated Daraja STK Query.
+ * - Financial verification remains independent.
  */
 
 const httpServer = createServer(app);
 
 let isShuttingDown = false;
+
 let shutdownPromise = null;
 
-/*
+/**
+ * ============================================================
+ * CLOSE HTTP SERVER
+ * ============================================================
+ */
+
+const closeHttpServer = async () => {
+  if (!httpServer.listening) {
+    return;
+  }
+
+  await new Promise((resolve, reject) => {
+    httpServer.close((error) => {
+      if (
+        error &&
+        error.code !== "ERR_SERVER_NOT_RUNNING"
+      ) {
+        reject(error);
+      } else {
+        resolve();
+      }
+    });
+  });
+};
+
+/**
  * ============================================================
  * GRACEFUL SHUTDOWN
  * ============================================================
@@ -47,95 +103,121 @@ const shutdown = (signal) => {
 
   isShuttingDown = true;
 
-  console.log(`${signal} received. Shutting down...`);
+  console.log(
+    `${signal} received. Shutting down...`
+  );
 
   shutdownPromise = (async () => {
     const forceExitTimer = setTimeout(() => {
-      console.error("Forced shutdown after timeout.");
+      console.error(
+        "Forced shutdown after timeout."
+      );
+
       process.exit(1);
-    }, 10000);
+    }, 10_000);
 
     forceExitTimer.unref();
 
     let exitCode = 0;
 
-    try {
-      /*
-       * Socket.IO closes its connections and may
-       * also close the underlying HTTP server.
-       *
-       * Close it before attempting to close HTTP.
-       */
-      await closeSocketServer();
+    /**
+     * Track cleanup independently.
+     *
+     * A failure in one component should
+     * not prevent cleanup of the others.
+     */
 
-      /*
-       * If Socket.IO has already closed HTTP,
-       * do not attempt to close it again.
+    try {
+      /**
+       * STEP 1 — STOP M-PESA WORKER
+       *
+       * Stop scheduling reconciliation cycles
+       * and wait for the current cycle.
+       *
+       * MongoDB must remain connected while
+       * the worker finishes.
        */
-      if (httpServer.listening) {
-        await new Promise((resolve, reject) => {
-          httpServer.close((error) => {
-            if (
-              error &&
-              error.code !== "ERR_SERVER_NOT_RUNNING"
-            ) {
-              reject(error);
-            } else {
-              resolve();
-            }
-          });
-        });
+
+      try {
+        await stopMpesaStkReconciliationWorker();
+
+        console.log(
+          "M-Pesa reconciliation worker stopped."
+        );
+      } catch (workerError) {
+        exitCode = 1;
+
+        console.error(
+          "M-Pesa worker shutdown error:",
+          workerError.message
+        );
       }
 
-      console.log("HTTP server closed.");
-
-      await disconnectDB();
-
-      console.log("Shutdown completed successfully.");
-    } catch (error) {
-      exitCode = 1;
-
-      console.error(
-        "Error during shutdown:",
-        error.message
-      );
-
-      /*
-       * Best-effort cleanup if an earlier
-       * shutdown operation failed.
+      /**
+       * STEP 2 — CLOSE SOCKET.IO
        */
+
       try {
-        if (httpServer.listening) {
-          await new Promise((resolve, reject) => {
-            httpServer.close((closeError) => {
-              if (
-                closeError &&
-                closeError.code !== "ERR_SERVER_NOT_RUNNING"
-              ) {
-                reject(closeError);
-              } else {
-                resolve();
-              }
-            });
-          });
-        }
+        await closeSocketServer();
+
+        console.log(
+          "Socket.IO server closed."
+        );
+      } catch (socketError) {
+        exitCode = 1;
+
+        console.error(
+          "Socket.IO shutdown error:",
+          socketError.message
+        );
+      }
+
+      /**
+       * STEP 3 — CLOSE HTTP SERVER
+       */
+
+      try {
+        await closeHttpServer();
+
+        console.log(
+          "HTTP server closed."
+        );
       } catch (httpError) {
+        exitCode = 1;
+
         console.error(
           "HTTP shutdown error:",
           httpError.message
         );
       }
 
+      /**
+       * STEP 4 — DISCONNECT MONGODB
+       */
+
       try {
         await disconnectDB();
+
+        console.log(
+          "MongoDB disconnected."
+        );
       } catch (dbError) {
+        exitCode = 1;
+
         console.error(
           "Database shutdown error:",
           dbError.message
         );
       }
+
+      if (exitCode === 0) {
+        console.log(
+          "Shutdown completed successfully."
+        );
+      }
     } finally {
       clearTimeout(forceExitTimer);
+
       process.exit(exitCode);
     }
   })();
@@ -143,7 +225,7 @@ const shutdown = (signal) => {
   return shutdownPromise;
 };
 
-/*
+/**
  * ============================================================
  * SERVER ERROR HANDLING
  * ============================================================
@@ -160,7 +242,7 @@ httpServer.on("error", (error) => {
   }
 });
 
-/*
+/**
  * ============================================================
  * START APPLICATION
  * ============================================================
@@ -168,29 +250,51 @@ httpServer.on("error", (error) => {
 
 const startServer = async () => {
   try {
-    console.log("==================================");
-    console.log(" PREMIUM CHAT BACKEND");
-    console.log("==================================");
+    console.log(
+      "=================================="
+    );
 
-    /*
-     * Connect to MongoDB before accepting
-     * HTTP requests or Socket.IO connections.
+    console.log(
+      " PREMIUM CHAT BACKEND"
+    );
+
+    console.log(
+      "=================================="
+    );
+
+    /**
+     * STEP 1 — CONNECT MONGODB
+     *
+     * MongoDB must be connected before
+     * starting HTTP or background workers.
      */
+
     await connectDB();
 
     if (isShuttingDown) {
       return;
     }
 
-    /*
-     * Attach Socket.IO to the existing
-     * HTTP server before it starts listening.
+    console.log(
+      "MongoDB: Connected"
+    );
+
+    /**
+     * STEP 2 — INITIALIZE SOCKET.IO
+     *
+     * Express and Socket.IO share
+     * the same HTTP server.
      */
+
     initializeSocketServer(httpServer);
 
     if (isShuttingDown) {
       return;
     }
+
+    /**
+     * STEP 3 — START HTTP SERVER
+     */
 
     await new Promise((resolve, reject) => {
       const onListeningError = (error) => {
@@ -207,34 +311,87 @@ const startServer = async () => {
         onListeningError
       );
 
-      httpServer.listen(env.PORT, () => {
-        httpServer.off(
-          "error",
-          onListeningError
-        );
+      httpServer.listen(
+        env.PORT,
+        () => {
+          httpServer.off(
+            "error",
+            onListeningError
+          );
 
-        resolve();
-      });
+          resolve();
+        }
+      );
     });
 
     if (isShuttingDown) {
       return;
     }
 
-    console.log("==================================");
-    console.log(`Environment: ${env.NODE_ENV}`);
-    console.log(`Server: http://localhost:${env.PORT}`);
-    console.log(`API: http://localhost:${env.PORT}/api`);
+    /**
+     * STEP 4 — START M-PESA WORKER
+     *
+     * The worker reads its enabled flag
+     * from the environment.
+     *
+     * It starts only after MongoDB
+     * and HTTP initialization succeed.
+     */
+
+    const mpesaWorkerStarted =
+      startMpesaStkReconciliationWorker();
+
+    if (isShuttingDown) {
+      return;
+    }
+
+    /**
+     * STEP 5 — STARTUP SUMMARY
+     */
+
+    console.log(
+      "=================================="
+    );
+
+    console.log(
+      `Environment: ${env.NODE_ENV}`
+    );
+
+    console.log(
+      `Server: http://localhost:${env.PORT}`
+    );
+
+    console.log(
+      `API: http://localhost:${env.PORT}/api`
+    );
+
     console.log(
       `Health: http://localhost:${env.PORT}/api/health`
     );
+
     console.log(
       `Database: http://localhost:${env.PORT}/api/health/db`
     );
-    console.log("Socket.IO: Initialized");
-    console.log("Socket authentication: Pending");
-    console.log("MongoDB: Connected");
-    console.log("==================================");
+
+    console.log(
+      "Socket.IO: Initialized"
+    );
+
+    console.log(
+      "MongoDB: Connected"
+    );
+
+    console.log(
+      `M-Pesa STK Worker: ${
+        mpesaWorkerStarted
+          ? "Running"
+          : "Disabled"
+      }`
+    );
+
+    console.log(
+      "=================================="
+    );
   } catch (error) {
     console.error(
       "Application startup failed:",
@@ -243,10 +400,28 @@ const startServer = async () => {
 
     process.exitCode = 1;
 
-    /*
-     * Cleanup Socket.IO and HTTP before
-     * disconnecting MongoDB.
+    /**
+     * ========================================================
+     * STARTUP FAILURE CLEANUP
+     * ========================================================
+     *
+     * Stop the worker before disconnecting
+     * MongoDB, even if startup failed.
      */
+
+    try {
+      await stopMpesaStkReconciliationWorker();
+    } catch (workerError) {
+      console.error(
+        "M-Pesa worker cleanup failed:",
+        workerError.message
+      );
+    }
+
+    /**
+     * Close Socket.IO.
+     */
+
     try {
       await closeSocketServer();
     } catch (socketError) {
@@ -256,21 +431,12 @@ const startServer = async () => {
       );
     }
 
+    /**
+     * Close HTTP server.
+     */
+
     try {
-      if (httpServer.listening) {
-        await new Promise((resolve, reject) => {
-          httpServer.close((closeError) => {
-            if (
-              closeError &&
-              closeError.code !== "ERR_SERVER_NOT_RUNNING"
-            ) {
-              reject(closeError);
-            } else {
-              resolve();
-            }
-          });
-        });
-      }
+      await closeHttpServer();
     } catch (httpError) {
       console.error(
         "HTTP cleanup failed:",
@@ -278,11 +444,15 @@ const startServer = async () => {
       );
     }
 
+    /**
+     * Disconnect MongoDB.
+     */
+
     try {
       await disconnectDB();
     } catch (disconnectError) {
       console.error(
-        "Cleanup failed:",
+        "MongoDB cleanup failed:",
         disconnectError.message
       );
     }
@@ -291,7 +461,7 @@ const startServer = async () => {
   }
 };
 
-/*
+/**
  * ============================================================
  * PROCESS SIGNAL HANDLERS
  * ============================================================
@@ -305,7 +475,7 @@ process.on("SIGTERM", () => {
   shutdown("SIGTERM");
 });
 
-/*
+/**
  * ============================================================
  * BOOTSTRAP
  * ============================================================
