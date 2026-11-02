@@ -5,6 +5,10 @@ import {
 } from "../services/auth.service.js";
 
 import {
+  submitDateOfBirth,
+} from "../services/ageVerification.service.js";
+
+import {
   toSafeUserResponse,
 } from "../utils/userResponse.js";
 
@@ -147,6 +151,46 @@ export const getMe = (req, res) => {
     },
     requestId: req.requestId,
   });
+};
+
+
+/**
+ * ============================================================
+ * SUBMIT DATE OF BIRTH
+ * POST /api/auth/age-verification
+ * ============================================================
+ *
+ * Requires authentication.
+ *
+ * The client submits only dateOfBirth.
+ * The service calculates age and controls the status.
+ */
+
+export const submitAgeVerification = async (
+  req,
+  res,
+  next
+) => {
+  try {
+    const { dateOfBirth } = req.validated.body;
+
+    const user = await submitDateOfBirth({
+      userId: req.user._id,
+      dateOfBirth,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message:
+        "Date of birth submitted. Your age check is self-declared.",
+      data: {
+        user: toSafeUserResponse(user),
+      },
+      requestId: req.requestId,
+    });
+  } catch (error) {
+    next(error);
+  }
 };
 
 /**

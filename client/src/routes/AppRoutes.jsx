@@ -1,62 +1,38 @@
+
 import {
   Routes,
   Route,
 } from "react-router-dom";
 
 import MainLayout from "../components/layout/MainLayout.jsx";
-
 import ProtectedRoute from "./ProtectedRoute.jsx";
 
+// Public pages
 import HomePage from "../pages/public/HomePage.jsx";
 import ExplorePage from "../pages/public/ExplorePage.jsx";
 import LoginPage from "../pages/public/LoginPage.jsx";
 import RegisterPage from "../pages/public/RegisterPage.jsx";
 import NotFoundPage from "../pages/public/NotFoundPage.jsx";
 import CreatorProfilePage from "../pages/public/CreatorProfilePage.jsx";
-
 import DevStatusPage from "../pages/public/DevStatusPage.jsx";
+import AgeVerificationPage from "../pages/public/AgeVerificationPage.jsx";
 
+// User pages
 import UserDashboard from "../pages/user/UserDashboard.jsx";
-import CreatorDashboard from "../pages/creator/CreatorDashboard.jsx";
-import AdminDashboard from "../pages/admin/AdminDashboard.jsx";
-
-/**
- * ============================================================
- * STEP 3.5.8 — CHAT PAGE
- * ============================================================
- */
-
 import ChatPage from "../pages/ChatPage.jsx";
 
-/**
- * ============================================================
- * PREMIUMCHAT APPLICATION ROUTES
- * ============================================================
- *
- * Public routes:
- * - Home
- * - Explore
- * - Login
- * - Register
- *
- * Authenticated routes:
- * - User dashboard
- * - Messages
- *
- * Creator routes:
- * - Creator dashboard
- *
- * Admin routes:
- * - Admin dashboard
- *
- * Authentication and role checks are handled by
- * ProtectedRoute.
- */
+// Creator pages
+import CreatorDashboard from "../pages/creator/CreatorDashboard.jsx";
+import CreatorGallery from "../pages/creator/CreatorGallery.jsx";
+
+// Admin pages
+import AdminDashboard from "../pages/admin/AdminDashboard.jsx";
 
 export default function AppRoutes() {
   return (
     <Routes>
       <Route element={<MainLayout />}>
+
         {/* ============================================= */}
         {/* PUBLIC ROUTES                                 */}
         {/* ============================================= */}
@@ -80,7 +56,7 @@ export default function AppRoutes() {
           path="/register"
           element={<RegisterPage />}
         />
-        
+
         <Route
           path="/creators/:creatorId"
           element={<CreatorProfilePage />}
@@ -107,13 +83,14 @@ export default function AppRoutes() {
             element={<UserDashboard />}
           />
 
-          {/* =========================================== */}
-          {/* PRIVATE MESSAGING                           */}
-          {/* =========================================== */}
-
           <Route
             path="/messages"
             element={<ChatPage />}
+          />
+
+          <Route
+            path="/age-verification"
+            element={<AgeVerificationPage />}
           />
         </Route>
 
@@ -132,6 +109,11 @@ export default function AppRoutes() {
           <Route
             path="/creator/dashboard"
             element={<CreatorDashboard />}
+          />
+
+          <Route
+            path="/creator/gallery"
+            element={<CreatorGallery />}
           />
         </Route>
 
@@ -160,6 +142,7 @@ export default function AppRoutes() {
           path="*"
           element={<NotFoundPage />}
         />
+
       </Route>
     </Routes>
   );

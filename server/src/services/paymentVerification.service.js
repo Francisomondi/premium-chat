@@ -1,3 +1,4 @@
+
 import mongoose from "mongoose";
 
 import PaymentTransaction from "../models/PaymentTransaction.model.js";
@@ -11,6 +12,7 @@ import {
   PAYMENT_PROVIDERS,
   PAYMENT_STATUSES,
   PAYMENT_VERIFICATION_STATUSES,
+  PAYMENT_PURPOSES,
 } from "../constants/payment.constants.js";
 
 /**
@@ -18,11 +20,12 @@ import {
  * PREMIUMCHAT — PAYMENT VERIFICATION SERVICE
  * ============================================================
  *
- * STEP 19.8.9
+ * STEP 19.8.9 / MEDIA PURCHASE VERIFICATION INTEGRATION
  *
  * Responsibilities:
  *
  * - Validate payment identifiers.
+ * - Validate supported payment purposes.
  * - Inspect stored payment verification state.
  * - Inspect financial verification records.
  * - Require matching settlement evidence.
@@ -35,7 +38,7 @@ import {
  * - Does not record settlements.
  * - Does not activate subscriptions.
  * - Does not trust client-supplied payment evidence.
- * - Does not grant access from callbacks or STK responses.
+ * - Does not grant media access from callbacks or STK responses.
  *
  * IMPORTANT:
  *
@@ -74,20 +77,39 @@ const deny = (reason) => ({
 
 /**
  * ============================================================
+ * SUPPORTED PAYMENT PURPOSES
+ * ============================================================
+ *
+ * Only implemented payment workflows are accepted here.
+ *
+ * PAID_MESSAGE and CREATOR_TIP remain unsupported until
+ * their respective trusted payment workflows are implemented.
+ */
+
+const SUPPORTED_PAYMENT_PURPOSES = Object.freeze([
+  PAYMENT_PURPOSES.SUBSCRIPTION_INITIAL,
+  PAYMENT_PURPOSES.SUBSCRIPTION_RENEWAL,
+  PAYMENT_PURPOSES.MEDIA_PURCHASE,
+]);
+
+const SUBSCRIPTION_PAYMENT_PURPOSES = Object.freeze([
+  PAYMENT_PURPOSES.SUBSCRIPTION_INITIAL,
+  PAYMENT_PURPOSES.SUBSCRIPTION_RENEWAL,
+]);
+
+/**
+ * ============================================================
  * CHECK STORED VERIFIED PAYMENT STATE
  * ============================================================
  */
 
-export const hasStoredVerifiedPaymentState = (
-  payment
-) => {
+export const hasStoredVerifiedPaymentState = (payment) => {
   if (!payment) {
     return false;
   }
 
   return (
-    payment.status ===
-      PAYMENT_STATUSES.SUCCEEDED &&
+    payment.status === PAYMENT_STATUSES.SUCCEEDED &&
     payment.verificationStatus ===
       PAYMENT_VERIFICATION_STATUSES.VERIFIED &&
     validDate(payment.verifiedAt) &&
@@ -129,6 +151,23 @@ export const inspectPaymentVerificationConsistency =
       };
     }
 
+    /**
+     * Reject unsupported or unknown payment purposes.
+     */
+
+    if (
+      !SUPPORTED_PAYMENT_PURPOSES.includes(payment.purpose)
+    ) {
+      return {
+        consistent: false,
+        reason: "UNSUPPORTED_PAYMENT_PURPOSE",
+      };
+    }
+
+    /**
+     * Retrieve the authoritative financial verification record.
+     */
+
     const financialVerification =
       await MpesaFinancialVerification.findOne({
         paymentId: payment._id,
@@ -137,8 +176,7 @@ export const inspectPaymentVerificationConsistency =
     if (!financialVerification) {
       return {
         consistent: false,
-        reason:
-          "FINANCIAL_VERIFICATION_RECORD_MISSING",
+        reason: "FINANCIAL_VERIFICATION_RECORD_MISSING",
       };
     }
 
@@ -148,8 +186,7 @@ export const inspectPaymentVerificationConsistency =
     ) {
       return {
         consistent: false,
-        reason:
-          "FINANCIAL_VERIFICATION_NOT_VERIFIED",
+        reason: "FINANCIAL_VERIFICATION_NOT_VERIFIED",
       };
     }
 
@@ -158,8 +195,7 @@ export const inspectPaymentVerificationConsistency =
     ) {
       return {
         consistent: false,
-        reason:
-          "FINANCIAL_VERIFICATION_REQUIRES_REVIEW",
+        reason: "FINANCIAL_VERIFICATION_REQUIRES_REVIEW",
       };
     }
 
@@ -174,8 +210,7 @@ export const inspectPaymentVerificationConsistency =
     ) {
       return {
         consistent: false,
-        reason:
-          "AUTHORITATIVE_SETTLEMENT_SOURCE_REQUIRED",
+        reason: "AUTHORITATIVE_SETTLEMENT_SOURCE_REQUIRED",
       };
     }
 
@@ -186,27 +221,63 @@ export const inspectPaymentVerificationConsistency =
     ) {
       return {
         consistent: false,
-        reason:
-          "SETTLEMENT_EVIDENCE_REFERENCE_MISSING",
+        reason: "SETTLEMENT_EVIDENCE_REFERENCE_MISSING",
       };
     }
+
+    /**
+     * Financial evidence must reference this exact payment.
+     */
 
     if (
       !sameId(
         financialVerification.paymentId,
         payment._id
-      ) ||
-      !sameId(
-        financialVerification.subscriptionId,
-        payment.subscriptionId
       )
     ) {
       return {
         consistent: false,
-        reason:
-          "FINANCIAL_SUBSCRIPTION_MISMATCH",
+        reason: "FINANCIAL_PAYMENT_MISMATCH",
       };
     }
+
+    /**
+     * Subscription payments must have matching subscription IDs.
+     *
+     * Non-subscription payments, including MEDIA_PURCHASE,
+     * must not carry subscription references.
+     */
+
+    const isSubscriptionPayment =
+      SUBSCRIPTION_PAYMENT_PURPOSES.includes(
+        payment.purpose
+      );
+
+    if (isSubscriptionPayment) {
+      if (
+        !sameId(
+          financialVerification.subscriptionId,
+          payment.subscriptionId
+        )
+      ) {
+        return {
+          consistent: false,
+          reason: "FINANCIAL_SUBSCRIPTION_MISMATCH",
+        };
+      }
+    } else if (
+      financialVerification.subscriptionId ||
+      payment.subscriptionId
+    ) {
+      return {
+        consistent: false,
+        reason: "UNEXPECTED_SUBSCRIPTION_REFERENCE",
+      };
+    }
+
+    /**
+     * Require matching provider transaction identifiers.
+     */
 
     if (
       !validString(payment.providerTransactionId) ||
@@ -215,10 +286,13 @@ export const inspectPaymentVerificationConsistency =
     ) {
       return {
         consistent: false,
-        reason:
-          "FINANCIAL_TRANSACTION_MISMATCH",
+        reason: "FINANCIAL_TRANSACTION_MISMATCH",
       };
     }
+
+    /**
+     * Require matching settlement receipt numbers.
+     */
 
     if (
       !validString(payment.providerReceipt) ||
@@ -227,10 +301,13 @@ export const inspectPaymentVerificationConsistency =
     ) {
       return {
         consistent: false,
-        reason:
-          "FINANCIAL_RECEIPT_MISMATCH",
+        reason: "FINANCIAL_RECEIPT_MISMATCH",
       };
     }
+
+    /**
+     * Require exact amount matching.
+     */
 
     if (
       financialVerification.verifiedAmountMinor !==
@@ -238,10 +315,13 @@ export const inspectPaymentVerificationConsistency =
     ) {
       return {
         consistent: false,
-        reason:
-          "FINANCIAL_AMOUNT_MISMATCH",
+        reason: "FINANCIAL_AMOUNT_MISMATCH",
       };
     }
+
+    /**
+     * Require exact currency matching.
+     */
 
     if (
       financialVerification.verifiedCurrency !==
@@ -249,28 +329,27 @@ export const inspectPaymentVerificationConsistency =
     ) {
       return {
         consistent: false,
-        reason:
-          "FINANCIAL_CURRENCY_MISMATCH",
+        reason: "FINANCIAL_CURRENCY_MISMATCH",
       };
     }
 
     if (
-      !validDate(
-        financialVerification.verifiedAt
-      )
+      !validDate(financialVerification.verifiedAt)
     ) {
       return {
         consistent: false,
-        reason:
-          "FINANCIAL_VERIFICATION_DATE_INVALID",
+        reason: "FINANCIAL_VERIFICATION_DATE_INVALID",
       };
     }
+
+    /**
+     * The payment itself must be stored as verified.
+     */
 
     if (!hasStoredVerifiedPaymentState(payment)) {
       return {
         consistent: false,
-        reason:
-          "PAYMENT_VERIFICATION_STATE_INVALID",
+        reason: "PAYMENT_VERIFICATION_STATE_INVALID",
       };
     }
 
@@ -288,21 +367,16 @@ export const inspectPaymentVerificationConsistency =
     ) {
       return {
         consistent: false,
-        reason:
-          "SETTLEMENT_ENQUIRY_RECEIPT_MISMATCH",
+        reason: "SETTLEMENT_ENQUIRY_RECEIPT_MISMATCH",
       };
     }
 
     return {
       consistent: true,
-
       paymentId: payment._id.toString(),
-
       financialVerificationId:
         financialVerification._id.toString(),
-
       reason: null,
-
       payment,
     };
   };
@@ -314,18 +388,21 @@ export const inspectPaymentVerificationConsistency =
  *
  * Read-only verification gate.
  *
- * Returns the payment state inspected alongside
- * its corresponding financial verification record.
- *
  * IMPORTANT:
  *
  * This function verifies stored evidence consistency.
  *
- * It does not independently authenticate a
- * settlement with Safaricom.
+ * It does not independently authenticate a settlement
+ * with Safaricom.
  *
- * Only trusted settlement-recording workflows
- * may create authoritative financial evidence.
+ * It does not activate subscriptions.
+ *
+ * It does not activate media purchases.
+ *
+ * It does not grant access to restricted media.
+ *
+ * Only trusted settlement-recording workflows may
+ * create authoritative financial evidence.
  */
 
 export const verifyPaymentTransaction = async ({
@@ -347,23 +424,16 @@ export const verifyPaymentTransaction = async ({
   const payment = consistency.payment;
 
   if (!payment) {
-    return deny(
-      "VERIFIED_PAYMENT_RECORD_MISSING"
-    );
+    return deny("VERIFIED_PAYMENT_RECORD_MISSING");
   }
 
   if (!hasStoredVerifiedPaymentState(payment)) {
-    return deny(
-      "PAYMENT_VERIFICATION_STATE_INVALID"
-    );
+    return deny("PAYMENT_VERIFICATION_STATE_INVALID");
   }
 
   return {
     verified: true,
-
-    reason:
-      "AUTHORITATIVE_SETTLEMENT_RECORD_VERIFIED",
-
+    reason: "AUTHORITATIVE_SETTLEMENT_RECORD_VERIFIED",
     payment,
   };
 };

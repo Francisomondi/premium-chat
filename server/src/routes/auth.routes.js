@@ -6,6 +6,7 @@ import {
   login,
   logout,
   getMe,
+  submitAgeVerification,
 } from "../controllers/auth.controller.js";
 
 import {
@@ -28,6 +29,10 @@ import {
   registerSchema,
   loginSchema,
 } from "../validators/auth.validators.js";
+
+import {
+  submitDateOfBirthSchema,
+} from "../validators/ageVerification.validators.js";
 
 /**
  * ============================================================
@@ -104,6 +109,31 @@ router.get(
   "/me",
   requireAuth,
   getMe
+);
+
+/**
+ * ============================================================
+ * SUBMIT DATE OF BIRTH
+ * ============================================================
+ *
+ * POST /api/auth/age-verification
+ *
+ * Security:
+ * - Requires authentication.
+ * - Requires trusted frontend origin.
+ * - Validates the request body with Zod.
+ * - Client cannot choose the age-verification status.
+ */
+
+router.post(
+  "/age-verification",
+  requireTrustedOrigin,
+  requireAuth,
+  authLimiter,
+  validate({
+    body: submitDateOfBirthSchema,
+  }),
+  submitAgeVerification
 );
 
 /**

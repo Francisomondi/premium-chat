@@ -12,6 +12,11 @@ import {
 } from "./config/db.js";
 
 import {
+  connectRedis,
+  disconnectRedis,
+} from "./config/redis.js";
+
+import {
   initializeSocketServer,
   closeSocketServer,
 } from "./socket/socket.server.js";
@@ -192,6 +197,28 @@ const shutdown = (signal) => {
       }
 
       /**
+ * STEP 4 — DISCONNECT REDIS
+ *
+ * Redis must be closed after application
+ * workers and HTTP/socket connections stop.
+ */
+
+try {
+  await disconnectRedis();
+
+  console.log(
+    "Redis disconnected."
+  );
+} catch (redisError) {
+  exitCode = 1;
+
+  console.error(
+    "Redis shutdown error:",
+    redisError.message
+  );
+}
+
+      /**
        * STEP 4 — DISCONNECT MONGODB
        */
 
@@ -278,6 +305,35 @@ const startServer = async () => {
     console.log(
       "MongoDB: Connected"
     );
+
+    /**
+   * STEP 2 — CONNECT REDIS
+   *
+   * Redis is optional during initial development.
+   *
+   * Security-sensitive features must explicitly
+   * require Redis before performing their operation.
+   */
+
+  const redisClient = await connectRedis();
+
+  if (isShuttingDown) {
+    return;
+  }
+
+  if (!redisClient?.isReady && env.NODE_ENV === "production") {
+    throw new Error(
+      "Redis is required in production but is unavailable."
+    );
+  }
+
+  console.log(
+    `Redis: ${
+      redisClient?.isReady
+        ? "Connected"
+        : "Unavailable — optional during development"
+    }`
+  );
 
     /**
      * STEP 2 — INITIALIZE SOCKET.IO
@@ -443,6 +499,19 @@ const startServer = async () => {
         httpError.message
       );
     }
+
+    /**
+ * Disconnect Redis.
+ */
+
+try {
+  await disconnectRedis();
+} catch (redisError) {
+  console.error(
+    "Redis cleanup failed:",
+    redisError.message
+  );
+}
 
     /**
      * Disconnect MongoDB.

@@ -230,33 +230,46 @@ export default function ProtectedRoute({
    * CREATOR APPROVAL AND AGE VERIFICATION
    * ==========================================================
    */
-
+if (
+  requireCreatorApproval &&
+  !hasCreatorAccess(user)
+) {
   if (
-    requireCreatorApproval &&
-    !hasCreatorAccess(user)
+    user.role === ACCOUNT_ROLES.CREATOR &&
+    user.ageVerificationStatus !==
+      AGE_VERIFICATION_STATUSES.VERIFIED
   ) {
     return (
-      <section className="flex min-h-[60vh] items-center justify-center px-4">
-        <div className="w-full max-w-lg rounded-2xl border border-border bg-surface p-8 text-center">
-          <h1 className="text-2xl font-bold">
-            Creator Access Unavailable
-          </h1>
-
-          <p className="mt-4 text-sm leading-7 text-muted">
-            Creator features require an approved
-            creator application and completed
-            adult age verification.
-          </p>
-
-          <p className="mt-3 text-sm leading-7 text-muted">
-            You can continue using your general
-            account dashboard while these
-            requirements are pending.
-          </p>
-        </div>
-      </section>
+      <Navigate
+        to="/age-verification"
+        replace
+        state={{
+          from: location.pathname,
+        }}
+      />
     );
   }
+
+  return (
+    <section className="flex min-h-[60vh] items-center justify-center px-4">
+      <div className="w-full max-w-lg rounded-2xl border border-border bg-surface p-8 text-center">
+        <h1 className="text-2xl font-bold">
+          Creator Access Unavailable
+        </h1>
+
+        <p className="mt-4 text-sm leading-7 text-muted">
+          Creator features require an approved creator
+          application and completed adult age verification.
+        </p>
+
+        <p className="mt-3 text-sm leading-7 text-muted">
+          You can continue using your general account
+          dashboard while these requirements are pending.
+        </p>
+      </div>
+    </section>
+  );
+}
 
   /**
    * ==========================================================

@@ -1,4 +1,24 @@
+
 import mongoose from "mongoose";
+
+import User from "../models/User.model.js";
+
+import {
+  MEDIA_STATUSES,
+  MEDIA_MODERATION_STATUSES,
+} from "../models/Media.model.js";
+
+import MediaPurchase, {
+  MEDIA_PURCHASE_STATUSES,
+} from "../models/MediaPurchase.model.js";
+
+import {
+  PAYMENT_PURPOSES,
+} from "../constants/payment.constants.js";
+
+import {
+  verifyPaymentTransaction,
+} from "./paymentVerification.service.js";
 
 import {
   authorizeSubscriberAccess,
@@ -14,30 +34,21 @@ import {
  * PREMIUMCHAT — MEDIA AUTHORIZATION SERVICE
  * ============================================================
  *
- * SECURITY PRINCIPLES:
+ * SECURITY REQUIREMENTS:
  *
- * 1. Media ownership must come from a trusted
- *    database record.
+ * 1. Media must come from a trusted database record.
+ * 2. Media must be READY and APPROVED.
+ * 3. Deleted media must never be delivered.
+ * 4. Every viewer must have an active account.
+ * 5. Every viewer must have valid adult verification.
+ * 6. Creators can access their own approved media.
+ * 7. Subscriber access requires a valid subscription.
+ * 8. Purchase access requires an active entitlement
+ *    and a verified payment.
+ * 9. Unknown policies are denied.
  *
- * 2. Media access policy must come from a trusted
- *    database record.
- *
- * 3. Subscription access never automatically
- *    grants purchase-only access.
- *
- * 4. Purchase access requires a verified,
- *    media-specific entitlement.
- *
- * 5. Unknown access policies are denied.
- *
- * 6. Payment verification failures deny access.
- *
- * IMPORTANT:
- *
- * This module does not expose media files.
- *
- * Actual media delivery must independently
- * enforce these authorization rules.
+ * This service authorizes access only.
+ * It does not generate download URLs.
  */
 
 /**
@@ -48,24 +59,28 @@ import {
 
 const deny = (reason) => ({
   hasAccess: false,
-
   reason,
-
   accessType: null,
 });
 
 const allow = (accessType) => ({
   hasAccess: true,
-
-  reason:
-    MEDIA_ACCESS_REASONS.ACCESS_GRANTED,
-
+  reason: MEDIA_ACCESS_REASONS.ACCESS_GRANTED,
   accessType,
 });
 
 const isValidObjectId = (value) => {
-  return mongoose.isObjectIdOrHexString(
-    value
+  return mongoose.isObjectIdOrHexString(value);
+};
+
+const normalizeId = (value) => {
+  return String(value?._id ?? value);
+};
+
+const sameId = (left, right) => {
+  return (
+    Boolean(left && right) &&
+    normalizeId(left) === normalizeId(right)
   );
 };
 
@@ -74,46 +89,124 @@ const isValidObjectId = (value) => {
  * VERIFY INDIVIDUAL MEDIA PURCHASE
  * ============================================================
  *
- * Payment integration is not implemented.
+ * Access requires BOTH:
  *
- * Until a trusted purchase entitlement exists,
- * this function must return false.
+ * 1. An ACTIVE MediaPurchase entitlement.
+ * 2. An authoritative verified MEDIA_PURCHASE payment
+ *    matching the purchase and its financial snapshots.
  *
- * Never replace this with:
+ * A pending, refunded, disputed or revoked purchase
+ * cannot grant access.
  *
- * return true;
- *
- * Never trust a client-supplied payment status.
+ * This function does not activate or modify purchases.
  */
 
 const verifyMediaPurchase = async ({
   viewerId,
   mediaId,
+  creatorId,
 }) => {
-  void viewerId;
-  void mediaId;
+  if (
+    !isValidObjectId(viewerId) ||
+    !isValidObjectId(mediaId) ||
+    !isValidObjectId(creatorId)
+  ) {
+    return false;
+  }
 
-  return false;
+  /**
+   * STEP 1 — FIND ACTIVE PURCHASE ENTITLEMENT
+   *
+   * Scope the query to the buyer, media and creator.
+   */
+
+  const purchase = await MediaPurchase.findOne({
+    buyerId: viewerId,
+    mediaId,
+    creatorId,
+    status: MEDIA_PURCHASE_STATUSES.ACTIVE,
+  });
+
+  if (!purchase) {
+    return false;
+  }
+
+  /**
+   * STEP 2 — REQUIRE A LINKED PAYMENT
+   */
+
+  if (!isValidObjectId(purchase.paymentId)) {
+    return false;
+  }
+
+  /**
+   * STEP 3 — VERIFY AUTHORITATIVE PAYMENT EVIDENCE
+   *
+   * This is a read-only verification operation.
+   * It does not trust STK acceptance or client evidence.
+   */
+
+  const verification = await verifyPaymentTransaction({
+    paymentId: normalizeId(purchase.paymentId),
+  });
+
+  if (
+    !verification ||
+    verification.verified !== true ||
+    !verification.payment
+  ) {
+    return false;
+  }
+
+  const payment = verification.payment;
+
+  /**
+   * STEP 4 — MATCH PAYMENT OWNERSHIP AND PURPOSE
+   */
+
+  if (
+    !sameId(payment.payerId, purchase.buyerId) ||
+    !sameId(payment.creatorId, purchase.creatorId) ||
+    payment.purpose !== PAYMENT_PURPOSES.MEDIA_PURCHASE ||
+    payment.subscriptionId != null
+  ) {
+    return false;
+  }
+
+  /**
+   * STEP 5 — MATCH PURCHASE FINANCIAL SNAPSHOTS
+   *
+   * The payment must match the amount and currency
+   * recorded when the purchase was reserved.
+   */
+
+  if (
+    payment.amountMinor !== purchase.amountMinor ||
+    payment.currency !== purchase.currency
+  ) {
+    return false;
+  }
+
+  /**
+   * STEP 6 — CONFIRM PAYMENT AND PURCHASE ASSOCIATION
+   */
+
+  if (
+    !sameId(payment._id, purchase.paymentId) ||
+    !sameId(purchase.mediaId, mediaId) ||
+    !sameId(purchase.buyerId, viewerId) ||
+    !sameId(purchase.creatorId, creatorId)
+  ) {
+    return false;
+  }
+
+  return true;
 };
 
 /**
  * ============================================================
  * AUTHORIZE MEDIA ACCESS
  * ============================================================
- *
- * PARAMETERS:
- *
- * viewerId:
- *   Authenticated user requesting media.
- *
- * media:
- *   Trusted media record already retrieved
- *   from the database.
- *
- * IMPORTANT:
- *
- * Never pass a client-supplied media object
- * directly into this service.
  */
 
 export const authorizeMediaAccess = async ({
@@ -121,14 +214,21 @@ export const authorizeMediaAccess = async ({
   media,
 }) => {
   /**
-   * STEP 1:
-   * Validate the media record.
+   * STEP 1 — VALIDATE MEDIA RECORD
    */
 
+  if (!media) {
+    return deny(
+      MEDIA_ACCESS_REASONS.MEDIA_NOT_FOUND
+    );
+  }
+
+  const mediaId = media._id;
+  const creatorId = media.creatorId?._id ?? media.creatorId;
+
   if (
-    !media ||
-    !isValidObjectId(media._id) ||
-    !isValidObjectId(media.creatorId)
+    !isValidObjectId(mediaId) ||
+    !isValidObjectId(creatorId)
   ) {
     return deny(
       MEDIA_ACCESS_REASONS.MEDIA_NOT_FOUND
@@ -136,8 +236,25 @@ export const authorizeMediaAccess = async ({
   }
 
   /**
-   * STEP 2:
-   * Validate the viewer.
+   * STEP 2 — CHECK MEDIA AVAILABILITY
+   *
+   * No user, including the creator, can access
+   * media that has not passed processing and moderation.
+   */
+
+  if (
+    media.status !== MEDIA_STATUSES.READY ||
+    media.moderationStatus !==
+      MEDIA_MODERATION_STATUSES.APPROVED ||
+    media.deletedAt != null
+  ) {
+    return deny(
+      MEDIA_ACCESS_REASONS.MEDIA_NOT_FOUND
+    );
+  }
+
+  /**
+   * STEP 3 — VALIDATE VIEWER ID
    */
 
   if (!isValidObjectId(viewerId)) {
@@ -146,43 +263,66 @@ export const authorizeMediaAccess = async ({
     );
   }
 
-  const normalizedViewerId =
-    viewerId.toString();
-
-  const creatorId =
-    media.creatorId.toString();
-
-  const mediaId =
-    media._id.toString();
+  const normalizedViewerId = normalizeId(viewerId);
+  const normalizedCreatorId = normalizeId(creatorId);
+  const normalizedMediaId = normalizeId(mediaId);
 
   /**
-   * STEP 3:
-   * Allow the creator to access
-   * their own media.
+   * STEP 4 — VERIFY VIEWER ACCOUNT AND AGE
    *
-   * This assumes creator ownership
-   * has already been established from
-   * a trusted database record.
+   * Always query the database.
+   * Never trust account or age-verification
+   * information supplied by the client.
    */
 
-  if (normalizedViewerId === creatorId) {
+  const viewer = await User.findById(
+    normalizedViewerId
+  );
+
+  if (
+    !viewer ||
+    !viewer.canAccessRestrictedContent()
+  ) {
+    return deny(
+      MEDIA_ACCESS_REASONS.VIEWER_NOT_ELIGIBLE
+    );
+  }
+
+  /**
+   * STEP 5 — CREATOR OWNERSHIP
+   *
+   * Ownership does not bypass account eligibility,
+   * media readiness, approval or deletion checks.
+   */
+
+  if (
+    normalizedViewerId === normalizedCreatorId
+  ) {
+    if (!viewer.canUseCreatorFeatures()) {
+      return deny(
+        MEDIA_ACCESS_REASONS.VIEWER_NOT_ELIGIBLE
+      );
+    }
+
     return allow("CREATOR");
   }
 
   /**
-   * STEP 4:
-   * Determine the media access policy.
+   * STEP 6 — DETERMINE ACCESS POLICY
    */
 
   const policy = media.accessPolicy;
 
   /**
    * PUBLIC MEDIA
+   *
+   * Public means no subscription or purchase
+   * is required. Authentication and adult
+   * verification are still mandatory.
    */
 
   if (
-    policy ===
-    MEDIA_ACCESS_POLICIES.PUBLIC
+    policy === MEDIA_ACCESS_POLICIES.PUBLIC
   ) {
     return allow("PUBLIC");
   }
@@ -192,15 +332,12 @@ export const authorizeMediaAccess = async ({
    */
 
   if (
-    policy ===
-    MEDIA_ACCESS_POLICIES.SUBSCRIBERS_ONLY
+    policy === MEDIA_ACCESS_POLICIES.SUBSCRIBERS_ONLY
   ) {
     const subscription =
       await authorizeSubscriberAccess({
-        subscriberId:
-          normalizedViewerId,
-
-        creatorId,
+        subscriberId: normalizedViewerId,
+        creatorId: normalizedCreatorId,
       });
 
     if (!subscription.hasAccess) {
@@ -215,20 +352,18 @@ export const authorizeMediaAccess = async ({
   /**
    * PURCHASE-ONLY MEDIA
    *
-   * A subscription must not bypass
-   * this authorization requirement.
+   * Subscription access must never bypass
+   * an individual purchase requirement.
    */
 
   if (
-    policy ===
-    MEDIA_ACCESS_POLICIES.PURCHASE_ONLY
+    policy === MEDIA_ACCESS_POLICIES.PURCHASE_ONLY
   ) {
     const purchased =
       await verifyMediaPurchase({
-        viewerId:
-          normalizedViewerId,
-
-        mediaId,
+        viewerId: normalizedViewerId,
+        mediaId: normalizedMediaId,
+        creatorId: normalizedCreatorId,
       });
 
     if (!purchased) {
@@ -243,8 +378,8 @@ export const authorizeMediaAccess = async ({
   /**
    * SUBSCRIPTION OR PURCHASE
    *
-   * Either verified entitlement may
-   * independently grant access.
+   * Either entitlement may independently
+   * grant access.
    */
 
   if (
@@ -253,10 +388,8 @@ export const authorizeMediaAccess = async ({
   ) {
     const subscription =
       await authorizeSubscriberAccess({
-        subscriberId:
-          normalizedViewerId,
-
-        creatorId,
+        subscriberId: normalizedViewerId,
+        creatorId: normalizedCreatorId,
       });
 
     if (subscription.hasAccess) {
@@ -265,10 +398,9 @@ export const authorizeMediaAccess = async ({
 
     const purchased =
       await verifyMediaPurchase({
-        viewerId:
-          normalizedViewerId,
-
-        mediaId,
+        viewerId: normalizedViewerId,
+        mediaId: normalizedMediaId,
+        creatorId: normalizedCreatorId,
       });
 
     if (purchased) {
@@ -281,8 +413,7 @@ export const authorizeMediaAccess = async ({
   }
 
   /**
-   * STEP 5:
-   * Reject unsupported access policies.
+   * STEP 7 — DENY UNKNOWN POLICIES
    */
 
   return deny(

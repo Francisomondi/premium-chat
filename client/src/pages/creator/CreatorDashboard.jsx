@@ -1,4 +1,3 @@
-
 import { Link } from "react-router-dom";
 
 import {
@@ -10,31 +9,15 @@ import {
   BadgeCheck,
   ArrowRight,
   Info,
+  LockKeyhole,
+  Video,
+  Image as ImageIcon,
+  CircleCheck,
 } from "lucide-react";
 
 import Card from "../../components/ui/Card.jsx";
 
 import { useAuthStore } from "../../store/useAuthStore.js";
-
-/**
- * ============================================================
- * PREMIUMCHAT CREATOR DASHBOARD
- * ============================================================
- *
- * Displays authenticated creator account information.
- *
- * Creator dashboard access is controlled by
- * ProtectedRoute.
- *
- * Future modules:
- * - Real-time conversations
- * - Paid images and videos
- * - Creator earnings
- * - Payout management
- * - Creator profile settings
- *
- * No financial statistics are fabricated.
- */
 
 const sections = [
   {
@@ -42,18 +25,22 @@ const sections = [
     title: "Conversations",
     description:
       "Manage private conversations with your audience.",
+    status: "Coming soon",
   },
   {
     icon: Images,
-    title: "Premium Content",
+    title: "Creator Gallery",
     description:
-      "Upload and manage locked images and videos.",
+      "Upload and organize the images and videos you share with your audience.",
+    path: "/creator/gallery",
+    status: "Available",
   },
   {
     icon: Wallet,
     title: "Earnings",
     description:
       "Track payments, revenue, and future payouts.",
+    status: "Coming soon",
   },
 ];
 
@@ -69,6 +56,22 @@ const formatStatus = (value) => {
       character.toUpperCase()
     );
 };
+
+function StatusBadge({ children, positive = false }) {
+  return (
+    <span
+      className={[
+        "inline-flex items-center rounded-full border px-3 py-1",
+        "text-xs font-medium",
+        positive
+          ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
+          : "border-border bg-background text-muted",
+      ].join(" ")}
+    >
+      {children}
+    </span>
+  );
+}
 
 export default function CreatorDashboard() {
   const user = useAuthStore((state) => state.user);
@@ -95,11 +98,11 @@ export default function CreatorDashboard() {
     user?.emailVerified === true;
 
   /**
-   * This is a frontend display check.
+   * This is a frontend display check only.
    *
    * The backend remains responsible for verifying
    * the account's actual eligibility, including
-   * verification expiry.
+   * verification expiry and creator permissions.
    */
   const creatorRequirementsMet =
     role === "CREATOR" &&
@@ -114,24 +117,36 @@ export default function CreatorDashboard() {
         {/* WELCOME                                       */}
         {/* ============================================= */}
 
-        <span className="eyebrow">
-          Creator Area
-        </span>
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <span className="eyebrow">
+              Creator Workspace
+            </span>
 
-        <h1 className="mt-4 text-3xl font-bold">
-          Welcome, {displayName}!
-        </h1>
+            <h1 className="mt-4 text-3xl font-bold">
+              Welcome, {displayName}!
+            </h1>
 
-        <p className="page-description">
-          Manage your audience, premium content,
-          and creator account on PremiumChat.
-        </p>
+            <p className="page-description">
+              Manage your audience, premium content,
+              and creator account on PremiumChat.
+            </p>
+          </div>
+
+          <StatusBadge positive={creatorRequirementsMet}>
+            {creatorRequirementsMet
+              ? "Creator approved"
+              : "Setup in progress"}
+          </StatusBadge>
+        </div>
 
         {/* ============================================= */}
         {/* CREATOR ACCOUNT OVERVIEW                      */}
         {/* ============================================= */}
 
         <div className="mt-8 grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+          {/* Creator Profile */}
+
           <Card>
             <UserRound
               size={26}
@@ -142,7 +157,7 @@ export default function CreatorDashboard() {
               Creator Profile
             </h2>
 
-            <div className="mt-4 space-y-3 text-sm">
+            <div className="mt-4 space-y-4 text-sm">
               <div>
                 <p className="text-muted">
                   Display Name
@@ -175,6 +190,8 @@ export default function CreatorDashboard() {
             </div>
           </Card>
 
+          {/* Verification Status */}
+
           <Card>
             <ShieldCheck
               size={26}
@@ -185,7 +202,7 @@ export default function CreatorDashboard() {
               Verification Status
             </h2>
 
-            <div className="mt-4 space-y-3 text-sm">
+            <div className="mt-4 space-y-4 text-sm">
               <div>
                 <p className="text-muted">
                   Account Status
@@ -214,13 +231,13 @@ export default function CreatorDashboard() {
                 </p>
 
                 <p className="mt-1 font-medium">
-                  {formatStatus(
-                    ageVerificationStatus
-                  )}
+                  {formatStatus(ageVerificationStatus)}
                 </p>
               </div>
             </div>
           </Card>
+
+          {/* Creator Approval */}
 
           <Card>
             <BadgeCheck
@@ -232,16 +249,14 @@ export default function CreatorDashboard() {
               Creator Approval
             </h2>
 
-            <div className="mt-4 space-y-3 text-sm">
+            <div className="mt-4 space-y-4 text-sm">
               <div>
                 <p className="text-muted">
                   Application Status
                 </p>
 
                 <p className="mt-1 font-medium">
-                  {formatStatus(
-                    creatorApplicationStatus
-                  )}
+                  {formatStatus(creatorApplicationStatus)}
                 </p>
               </div>
 
@@ -258,84 +273,174 @@ export default function CreatorDashboard() {
               </div>
             </div>
 
-            <p className="mt-4 text-xs leading-5 text-muted">
-              Final access to creator features
-              is verified securely by the backend.
-            </p>
+            <div className="mt-4 flex items-start gap-2">
+              <Info
+                size={15}
+                className="mt-0.5 shrink-0 text-muted"
+              />
+
+              <p className="text-xs leading-5 text-muted">
+                Final access to creator features is
+                verified securely by the backend.
+              </p>
+            </div>
           </Card>
         </div>
 
         {/* ============================================= */}
-        {/* MONETIZATION PREPARATION                      */}
-        {/* ============================================= */}
-
-        <div className="mt-8 rounded-2xl border border-border bg-surface p-6">
-          <div className="flex items-start gap-3">
-            <Info
-              size={23}
-              className="mt-1 shrink-0 text-accent"
-            />
-
-            <div>
-              <h2 className="text-lg font-semibold">
-                Creator Monetization
-              </h2>
-
-              <p className="mt-2 text-sm leading-6 text-muted">
-                Your future creator workspace will
-                include private conversations,
-                paid images and videos, earnings
-                tracking, and payout management.
-              </p>
-
-              <p className="mt-3 text-sm leading-6 text-muted">
-                Earnings and transaction statistics
-                will appear once the payment and
-                monetization modules are connected.
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {/* ============================================= */}
-        {/* CREATOR TOOLS                                 */}
+        {/* CREATOR CONTENT WORKSPACE                     */}
         {/* ============================================= */}
 
         <div className="mt-10">
-          <h2 className="text-2xl font-bold">
-            Creator Tools
-          </h2>
+          <div>
+            <span className="eyebrow">
+              Your Workspace
+            </span>
 
-          <p className="mt-2 text-sm text-muted">
-            Manage the main areas of your creator
-            workspace.
-          </p>
+            <h2 className="mt-3 text-2xl font-bold">
+              Creator Tools
+            </h2>
+
+            <p className="mt-2 text-sm leading-6 text-muted">
+              Build your content library and prepare
+              to connect with your audience.
+            </p>
+          </div>
 
           <div className="dashboard-grid mt-6">
             {sections.map(
-              ({ icon: Icon, title, description }) => (
-                <Card key={title}>
-                  <Icon
-                    size={28}
-                    className="text-accent"
-                  />
+              ({
+                icon: Icon,
+                title,
+                description,
+                path,
+                status,
+              }) => {
+                const isAvailable = Boolean(path);
 
-                  <h3 className="mt-4 text-lg font-semibold">
-                    {title}
-                  </h3>
+                return (
+                  <Card
+                    key={title}
+                    className="flex flex-col"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex size-11 items-center justify-center rounded-xl border border-border bg-background">
+                        <Icon
+                          size={23}
+                          className="text-accent"
+                        />
+                      </div>
 
-                  <p className="mt-2 text-sm leading-6 text-muted">
-                    {description}
-                  </p>
+                      <StatusBadge positive={isAvailable}>
+                        {status}
+                      </StatusBadge>
+                    </div>
 
-                  <p className="mt-4 text-xs font-medium text-muted">
-                    Feature coming in a future module
-                  </p>
-                </Card>
-              )
+                    <h3 className="mt-5 text-lg font-semibold">
+                      {title}
+                    </h3>
+
+                    <p className="mt-2 flex-1 text-sm leading-6 text-muted">
+                      {description}
+                    </p>
+
+                    {isAvailable ? (
+                      <Link
+                        to={path}
+                        className="mt-5 inline-flex items-center gap-2 text-sm font-semibold text-accent transition-opacity hover:opacity-80"
+                      >
+                        Open gallery
+                        <ArrowRight size={16} />
+                      </Link>
+                    ) : (
+                      <p className="mt-5 text-xs font-medium text-muted">
+                        This workspace will be available
+                        in a future module.
+                      </p>
+                    )}
+                  </Card>
+                );
+              }
             )}
           </div>
         </div>
+
+        {/* ============================================= */}
+        {/* PREMIUM CONTENT PREVIEW                       */}
+        {/* ============================================= */}
+
+        <Card className="mt-10 overflow-hidden">
+          <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
+            <div className="max-w-xl">
+              <span className="eyebrow">
+                Monetization
+              </span>
+
+              <h2 className="mt-3 text-2xl font-bold">
+                Your premium content journey
+              </h2>
+
+              <p className="mt-3 text-sm leading-6 text-muted">
+                PremiumChat is preparing tools that
+                will help creators share exclusive
+                content and build paid relationships
+                with their audience.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-3 gap-3 lg:min-w-[280px]">
+              <div className="rounded-xl border border-border bg-background p-3 text-center">
+                <MessageSquare
+                  size={20}
+                  className="mx-auto text-accent"
+                />
+
+                <p className="mt-2 text-xs font-medium">
+                  Private chat
+                </p>
+              </div>
+
+              <div className="rounded-xl border border-border bg-background p-3 text-center">
+                <ImageIcon
+                  size={20}
+                  className="mx-auto text-accent"
+                />
+
+                <p className="mt-2 text-xs font-medium">
+                  Paid images
+                </p>
+              </div>
+
+              <div className="rounded-xl border border-border bg-background p-3 text-center">
+                <Video
+                  size={20}
+                  className="mx-auto text-accent"
+                />
+
+                <p className="mt-2 text-xs font-medium">
+                  Paid videos
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-6 border-t border-border pt-5">
+            <div className="flex items-start gap-3">
+              <LockKeyhole
+                size={19}
+                className="mt-0.5 shrink-0 text-accent"
+              />
+
+              <p className="text-sm leading-6 text-muted">
+                Paid media delivery, earnings, and
+                payout management will be connected
+                when their respective modules are ready.
+                No earnings or transaction figures are
+                displayed until real data is available.
+              </p>
+            </div>
+          </div>
+        </Card>
 
         {/* ============================================= */}
         {/* EXPLORE PLATFORM                              */}

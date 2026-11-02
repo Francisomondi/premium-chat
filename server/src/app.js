@@ -1,30 +1,17 @@
 import express from "express";
 import cookieParser from "cookie-parser";
 import hpp from "hpp";
-
 import authRoutes from "./routes/auth.routes.js";
-
 import creatorApplicationRoutes from "./routes/creatorApplication.routes.js";
-
 import adminCreatorApplicationRoutes from "./routes/adminCreatorApplication.routes.js";
 import adminCreatorProfileRoutes from "./routes/adminCreatorProfile.routes.js";
-
-
 import conversationRoutes from "./routes/conversation.routes.js";
-
+import mediaRoutes from "./routes/media.routes.js";
 import creatorMonetizationRoutes from "./routes/creatorMonetization.routes.js";
-
 import creatorSubscriptionPlanRoutes from "./routes/creatorSubscriptionPlan.routes.js";
-
 import publicCreatorSubscriptionPlanRoutes from "./routes/publicCreatorSubscriptionPlan.routes.js";
-
 import mpesaTransactionStatusRoutes from "./routes/mpesaTransactionStatus.routes.js";
-
-
-
-
 import subscriberSubscriptionRoutes from "./routes/subscriberSubscription.routes.js";
-
 import creatorSubscriberRoutes from "./routes/creatorSubscriber.routes.js";
 import mpesaPaymentRoutes from "./routes/mpesaPayment.routes.js";
 import mpesaCallbackRoutes from "./routes/mpesaCallback.routes.js";
@@ -223,6 +210,17 @@ app.use(
 app.use(
   `${env.API_PREFIX}/conversations`,
   conversationRoutes
+);
+
+/*
+ * ============================================================
+ * PRIVATE MEDIA ROUTES
+ * ============================================================
+ */
+
+app.use(
+  `${env.API_PREFIX}/media`,
+  mediaRoutes
 );
 
 /*

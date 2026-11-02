@@ -91,6 +91,29 @@ export const getAuthenticatedUser = async () => {
 
 /**
  * ============================================================
+ * SUBMIT DATE OF BIRTH
+ * POST /api/auth/age-verification
+ * ============================================================
+ *
+ * The backend calculates age and controls the status.
+ * The frontend submits only the date of birth.
+ */
+
+export const submitDateOfBirth = async ({
+  dateOfBirth,
+}) => {
+  const response = await axiosInstance.post(
+    `${AUTH_BASE}/age-verification`,
+    {
+      dateOfBirth,
+    }
+  );
+
+  return response.data;
+};
+
+/**
+ * ============================================================
  * LOGOUT USER
  * POST /api/auth/logout
  * ============================================================
@@ -117,6 +140,7 @@ const authService = {
   registerUser,
   loginUser,
   getAuthenticatedUser,
+  submitDateOfBirth,
   logoutUser,
 };
 

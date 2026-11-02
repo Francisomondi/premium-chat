@@ -1,19 +1,6 @@
 
 import mongoose from "mongoose";
 
-/**
- * ============================================================
- * PREMIUMCHAT AUTHENTICATION SESSION MODEL
- * ============================================================
- *
- * Stores server-side authentication sessions.
- *
- * Each session belongs to one user.
- * A session may be revoked before its JWT expires.
- *
- * No raw JWTs or passwords are stored.
- */
-
 const authSessionSchema = new mongoose.Schema(
   {
     userId: {
