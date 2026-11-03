@@ -7,6 +7,10 @@ import {
   getPublicCreatorProfile,
 } from "../controllers/creatorDiscovery.controller.js";
 
+import {
+  getPublicCreatorGalleryController,
+} from "../controllers/creatorGallery.controller.js";
+
 /**
  * ============================================================
  * PREMIUMCHAT — PUBLIC CREATOR DISCOVERY ROUTES
@@ -59,6 +63,12 @@ router.get(
   "/",
   discoveryLimiter,
   getPublicCreators
+);
+
+router.get(
+  "/:creatorId/gallery",
+  discoveryLimiter,
+  getPublicCreatorGalleryController
 );
 
 /**

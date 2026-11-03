@@ -170,6 +170,27 @@ function ActiveChatPanel({
   const conversationStatus =
     conversation?.status ?? "ACTIVE";
 
+  const currentUser = useAuthStore(
+  (state) => state.user
+);
+
+const currentUserId = String(
+  currentUser?._id ??
+  currentUser?.id ??
+  ""
+);
+
+const conversationCreatorId = String(
+  conversation?.creatorId?._id ??
+  conversation?.creatorId ??
+  ""
+);
+
+const isCurrentUserCreator =
+  Boolean(currentUserId) &&
+  Boolean(conversationCreatorId) &&
+  currentUserId === conversationCreatorId;
+
   return (
     <div className="flex h-full min-h-0 flex-col bg-[#09090c]">
       {/* CHAT HEADER */}
@@ -199,10 +220,16 @@ function ActiveChatPanel({
 
       {/* MESSAGE COMPOSER */}
 
-      <MessageComposer
-        conversationId={conversationId}
-        conversationStatus={conversationStatus}
-      />
+      <div
+        data-current-user-is-creator={
+          isCurrentUserCreator ? "true" : "false"
+        }
+      >
+        <MessageComposer
+          conversationId={conversationId}
+          conversationStatus={conversationStatus}
+        />
+      </div>
     </div>
   );
 }

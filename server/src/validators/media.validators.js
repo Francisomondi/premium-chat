@@ -30,14 +30,27 @@ const accessPolicySchema = z.enum(
   Object.values(MEDIA_ACCESS_POLICIES)
 );
 
+const uploadDestinationSchema = z.enum([
+  "CONVERSATION",
+  "GALLERY",
+]);
+
 /**
  * POST /api/media/uploads
  *
  * Creates a private upload intent.
+ *
+ * CONVERSATION:
+ * - Requires conversationId.
+ *
+ * GALLERY:
+ * - Must not include conversationId.
  */
 export const createMediaUploadSchema = z
   .object({
-    conversationId: objectIdSchema,
+    destination: uploadDestinationSchema.default("CONVERSATION"),
+
+    conversationId: objectIdSchema.optional(),
 
     mediaType: mediaTypeSchema,
 
@@ -65,7 +78,30 @@ export const createMediaUploadSchema = z
 
     attestationVersion: z.string().trim().min(1).max(30),
   })
-  .strict();
+  .strict()
+  .superRefine((data, ctx) => {
+    if (
+      data.destination === "CONVERSATION" &&
+      !data.conversationId
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["conversationId"],
+        message: "A conversation ID is required for conversation uploads.",
+      });
+    }
+
+    if (
+      data.destination === "GALLERY" &&
+      data.conversationId
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["conversationId"],
+        message: "Gallery uploads must not include a conversation ID.",
+      });
+    }
+  });
 
 /**
  * POST /api/media/:mediaId/complete

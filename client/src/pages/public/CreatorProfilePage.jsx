@@ -17,6 +17,8 @@ import {
   BadgeCheck,
   CalendarDays,
   Crown,
+  Image as ImageIcon,
+  Video,
   LockKeyhole,
   MessageCircle,
   ShieldCheck,
@@ -29,6 +31,10 @@ import {
 import {
   getPublicCreatorProfile,
 } from "../../api/creator.api.js";
+
+import {
+  getPublicCreatorGallery,
+} from "../../api/services/creatorGalleryService.js";
 
 import {
   getCreatorSubscriptionAccess,
@@ -362,6 +368,32 @@ export default function CreatorProfilePage() {
   const [reloadKey, setReloadKey] =
     useState(0);
 
+      /**
+   * ==========================================================
+   * PUBLIC CREATOR GALLERY STATE
+   * ==========================================================
+   */
+
+  const [gallery, setGallery] = useState([]);
+
+  const [galleryPagination, setGalleryPagination] =
+    useState({
+      page: 1,
+      limit: 12,
+      total: 0,
+      totalPages: 0,
+      hasNextPage: false,
+      hasPreviousPage: false,
+    });
+
+  const [galleryPage, setGalleryPage] = useState(1);
+
+  const [isGalleryLoading, setIsGalleryLoading] =
+    useState(false);
+
+  const [galleryError, setGalleryError] =
+    useState(null);
+
   /**
    * ==========================================================
    * CHAT STATE
@@ -512,6 +544,88 @@ export default function CreatorProfilePage() {
       controller.abort();
     };
   }, [creatorId, reloadKey]);
+
+
+    /**
+   * ==========================================================
+   * FETCH PUBLIC CREATOR GALLERY
+   * ==========================================================
+   */
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    const fetchGallery = async () => {
+      if (!creatorId) {
+        setGallery([]);
+        setGalleryError(null);
+        setIsGalleryLoading(false);
+        return;
+      }
+
+      setIsGalleryLoading(true);
+      setGalleryError(null);
+
+      try {
+        const response = await getPublicCreatorGallery(
+          creatorId,
+          {
+            page: galleryPage,
+            limit: 12,
+            signal: controller.signal,
+          }
+        );
+
+        if (controller.signal.aborted) {
+          return;
+        }
+
+        if (
+          response?.success !== true ||
+          !Array.isArray(response?.data?.media)
+        ) {
+          throw new Error(
+            "Invalid creator gallery response."
+          );
+        }
+
+        setGallery(response.data.media);
+
+        setGalleryPagination(
+          response.data.pagination
+        );
+      } catch (requestError) {
+        if (
+          isCanceledRequest(
+            requestError,
+            controller.signal
+          )
+        ) {
+          return;
+        }
+
+        console.error(
+          "[PremiumChat] Public creator gallery:",
+          requestError
+        );
+
+        setGallery([]);
+        setGalleryError(
+          "We couldn't load this creator's gallery."
+        );
+      } finally {
+        if (!controller.signal.aborted) {
+          setIsGalleryLoading(false);
+        }
+      }
+    };
+
+    fetchGallery();
+
+    return () => {
+      controller.abort();
+    };
+  }, [creatorId, galleryPage]);
 
   /**
    * ==========================================================
@@ -1222,6 +1336,181 @@ export default function CreatorProfilePage() {
             </div>
           </div>
         </div>
+
+                {/* PUBLIC CREATOR GALLERY */}
+
+        <section
+          aria-labelledby="creator-gallery-heading"
+          className="mt-12 border-t border-white/10 pt-8"
+        >
+          <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <h2
+                id="creator-gallery-heading"
+                className="text-xl font-bold text-white sm:text-2xl"
+              >
+                Creator Gallery
+              </h2>
+
+              <p className="mt-1 text-sm text-zinc-400">
+                Explore this creator's published media.
+              </p>
+            </div>
+
+            <span className="text-xs text-zinc-500">
+              {galleryPagination.total}{" "}
+              {galleryPagination.total === 1
+                ? "item"
+                : "items"}
+            </span>
+          </div>
+
+          {isGalleryLoading ? (
+            <div
+              role="status"
+              className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4"
+            >
+              {Array.from(
+                { length: 4 },
+                (_, index) => (
+                  <div
+                    key={index}
+                    className="aspect-square animate-pulse rounded-xl border border-white/5 bg-white/5"
+                  />
+                )
+              )}
+
+              <span className="sr-only">
+                Loading creator gallery...
+              </span>
+            </div>
+          ) : galleryError ? (
+            <div
+              role="alert"
+              className="rounded-xl border border-red-500/20 bg-red-500/5 px-4 py-5 text-sm text-red-300"
+            >
+              {galleryError}
+            </div>
+          ) : gallery.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-white/10 bg-[#15151a] px-5 py-12 text-center">
+              <ImageIcon
+                size={30}
+                className="mx-auto text-zinc-600"
+              />
+
+              <h3 className="mt-3 text-sm font-semibold text-white">
+                No gallery items yet
+              </h3>
+
+              <p className="mt-1 text-xs text-zinc-500">
+                Approved public media will appear here.
+              </p>
+            </div>
+          ) : (
+            <>
+              <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+                {gallery.map((item) => (
+                  <article
+                    key={item.id}
+                    className="group overflow-hidden rounded-xl border border-white/10 bg-[#15151a] transition hover:border-[#ffcc42]/30"
+                  >
+                    <div className="relative flex aspect-square items-center justify-center overflow-hidden bg-gradient-to-br from-[#292018] via-[#19191f] to-[#101014]">
+                      {item.mediaType === "VIDEO" ? (
+                        <Video
+                          size={38}
+                          strokeWidth={1.3}
+                          className="text-[#ffcc42]/80"
+                        />
+                      ) : (
+                        <ImageIcon
+                          size={38}
+                          strokeWidth={1.3}
+                          className="text-[#ffcc42]/80"
+                        />
+                      )}
+
+                      <span className="absolute bottom-3 left-3 rounded-full border border-white/10 bg-black/60 px-2.5 py-1 text-[9px] font-semibold uppercase tracking-wider text-white">
+                        {item.mediaType === "VIDEO"
+                          ? "Video"
+                          : "Image"}
+                      </span>
+                    </div>
+
+                    <div className="p-3">
+                      <p className="text-xs font-semibold text-white">
+                        {item.mediaType === "VIDEO"
+                          ? "Creator video"
+                          : "Creator image"}
+                      </p>
+
+                      <p className="mt-1 text-[10px] text-zinc-500">
+                        {item.createdAt &&
+                        !Number.isNaN(
+                          new Date(
+                            item.createdAt
+                          ).getTime()
+                        )
+                          ? new Date(
+                              item.createdAt
+                            ).toLocaleDateString(
+                              undefined,
+                              {
+                                day: "numeric",
+                                month: "short",
+                                year: "numeric",
+                              }
+                            )
+                          : "Recently published"}
+                      </p>
+                    </div>
+                  </article>
+                ))}
+              </div>
+
+              {galleryPagination.totalPages > 1 && (
+                <div className="mt-7 flex items-center justify-center gap-4">
+                  <button
+                    type="button"
+                    disabled={
+                      !galleryPagination.hasPreviousPage
+                    }
+                    onClick={() => {
+                      setGalleryPage(
+                        (previous) =>
+                          Math.max(1, previous - 1)
+                      );
+                    }}
+                    className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-white/10 px-4 text-xs font-semibold text-white transition hover:border-[#ffcc42]/40 hover:text-[#ffcc42] disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <ArrowLeft size={14} />
+                    Previous
+                  </button>
+
+                  <span className="text-xs text-zinc-400">
+                    Page {galleryPagination.page} of{" "}
+                    {galleryPagination.totalPages}
+                  </span>
+
+                  <button
+                    type="button"
+                    disabled={
+                      !galleryPagination.hasNextPage
+                    }
+                    onClick={() => {
+                      setGalleryPage(
+                        (previous) => previous + 1
+                      );
+                    }}
+                    className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-white/10 px-4 text-xs font-semibold text-white transition hover:border-[#ffcc42]/40 hover:text-[#ffcc42] disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Next
+                    <ArrowRight size={14} />
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+        </section>
 
         {/* BOTTOM CTA */}
 

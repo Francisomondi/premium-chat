@@ -51,31 +51,33 @@ export const createMediaUploadController = async (
     }
 
     const {
-      conversationId,
-      mediaType,
-      mimeType,
-      fileSize,
-      accessPolicy,
-      priceMinor,
-      currency,
-      rightsConfirmed,
-      allDepictedAdultsAndConsented,
-      attestationVersion,
-    } = req.body;
+    destination,
+    conversationId,
+    mediaType,
+    mimeType,
+    fileSize,
+    accessPolicy,
+    priceMinor,
+    currency,
+    rightsConfirmed,
+    allDepictedAdultsAndConsented,
+    attestationVersion,
+  } = req.body;
 
-    const result = await createMediaUploadIntent({
-      creatorId: String(userId),
-      conversationId,
-      mediaType,
-      mimeType,
-      fileSize,
-      accessPolicy,
-      priceMinor,
-      currency,
-      rightsConfirmed,
-      allDepictedAdultsAndConsented,
-      attestationVersion,
-    });
+  const result = await createMediaUploadIntent({
+    creatorId: String(userId),
+    destination,
+    conversationId,
+    mediaType,
+    mimeType,
+    fileSize,
+    accessPolicy,
+    priceMinor,
+    currency,
+    rightsConfirmed,
+    allDepictedAdultsAndConsented,
+    attestationVersion,
+  });
 
     return res.status(201).json({
       success: true,

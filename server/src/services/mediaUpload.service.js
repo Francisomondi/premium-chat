@@ -350,6 +350,7 @@ const validateMediaPricing = ({
 
 export const createMediaUploadIntent = async ({
   creatorId,
+  destination = "CONVERSATION",
   conversationId,
   mediaType,
   mimeType,
@@ -363,14 +364,47 @@ export const createMediaUploadIntent = async ({
 }) => {
   /**
    * STEP 1:
-   * Validate identifiers.
+   * Validate creator ID and upload destination.
    */
 
   validateObjectId(creatorId, "creator ID");
-  validateObjectId(conversationId, "conversation ID");
+
+  if (!["CONVERSATION", "GALLERY"].includes(destination)) {
+    throw new AppError(
+      "Invalid media upload destination.",
+      400,
+      "INVALID_MEDIA_DESTINATION"
+    );
+  }
 
   /**
    * STEP 2:
+   * Validate destination-specific identifiers.
+   */
+
+  let validatedConversationId = null;
+
+  if (destination === "CONVERSATION") {
+    validatedConversationId = validateObjectId(
+      conversationId,
+      "conversation ID"
+    );
+  }
+
+  if (
+    destination === "GALLERY" &&
+    conversationId !== undefined &&
+    conversationId !== null
+  ) {
+    throw new AppError(
+      "Gallery uploads cannot be linked to a conversation.",
+      400,
+      "INVALID_GALLERY_CONVERSATION"
+    );
+  }
+
+  /**
+   * STEP 3:
    * Validate file metadata.
    */
 
@@ -381,7 +415,7 @@ export const createMediaUploadIntent = async ({
   });
 
   /**
-   * STEP 2.1:
+   * STEP 4:
    * Validate access policy and pricing.
    */
 
@@ -392,7 +426,7 @@ export const createMediaUploadIntent = async ({
   });
 
   /**
-   * STEP 3:
+   * STEP 5:
    * Require creator attestations.
    */
 
@@ -420,43 +454,41 @@ export const createMediaUploadIntent = async ({
   }
 
   /**
-   * STEP 4:
+   * STEP 6:
    * Verify creator eligibility from MongoDB.
    */
 
   await verifyEligibleCreator(creatorId);
 
   /**
-   * STEP 5:
-   * Verify conversation membership and status.
+   * STEP 7:
+   * Verify conversation ownership only for
+   * conversation-linked uploads.
    */
 
-  const conversation = await verifyConversationMembership({
-    conversationId,
-    userId: creatorId,
-    requireActive: true,
-  });
+  if (destination === "CONVERSATION") {
+    const conversation = await verifyConversationMembership({
+      conversationId: validatedConversationId,
+      userId: creatorId,
+      requireActive: true,
+    });
 
-  /**
-   * STEP 6:
-   * Ensure this creator owns the conversation.
-   */
-
-  const conversationCreatorId = String(
-    conversation.creatorId?._id ??
-      conversation.creatorId
-  );
-
-  if (conversationCreatorId !== String(creatorId)) {
-    throw new AppError(
-      "Only the creator who owns this conversation may upload its media.",
-      403,
-      "CONVERSATION_CREATOR_MISMATCH"
+    const conversationCreatorId = String(
+      conversation.creatorId?._id ??
+        conversation.creatorId
     );
+
+    if (conversationCreatorId !== String(creatorId)) {
+      throw new AppError(
+        "Only the creator who owns this conversation may upload its media.",
+        403,
+        "CONVERSATION_CREATOR_MISMATCH"
+      );
+    }
   }
 
   /**
-   * STEP 7:
+   * STEP 8:
    * Require private R2 storage.
    */
 
@@ -466,7 +498,7 @@ export const createMediaUploadIntent = async ({
   } = requireMediaStorage();
 
   /**
-   * STEP 8:
+   * STEP 9:
    * Generate a server-controlled object key.
    */
 
@@ -483,10 +515,13 @@ export const createMediaUploadIntent = async ({
     `private/creators/${creatorId}/media/${mediaId}/${randomToken}.${extension}`;
 
   /**
-   * STEP 9:
+   * STEP 10:
    * Create a private media record.
    *
-   * The record is not READY and is not approved.
+   * Gallery media has conversationId: null.
+   * Conversation media retains its validated ID.
+   *
+   * Neither destination is automatically approved.
    */
 
   const uploadExpiresAt = new Date(
@@ -498,7 +533,7 @@ export const createMediaUploadIntent = async ({
 
     creatorId,
 
-    conversationId,
+    conversationId: validatedConversationId,
 
     mediaType,
 
@@ -530,7 +565,7 @@ export const createMediaUploadIntent = async ({
   });
 
   /**
-   * STEP 10:
+   * STEP 11:
    * Generate a short-lived signed PUT URL.
    */
 
@@ -556,7 +591,7 @@ export const createMediaUploadIntent = async ({
   );
 
   /**
-   * STEP 11:
+   * STEP 12:
    * Return only safe upload information.
    *
    * Never return storageKey or credentials.
