@@ -26,7 +26,6 @@ import {
 import AppError from "../utils/AppError.js";
 
 const isValidId = (value) =>
-  typeof value === "string" &&
   mongoose.isObjectIdOrHexString(value);
 
 const validateClientRequestId = (value) => {
@@ -177,24 +176,28 @@ const reserveMediaPurchase = async ({
     };
   }
 
-  const existingPurchase = await MediaPurchase.findOne({
-    buyerId,
-    mediaId,
-    status: {
-      $in: [
-        MEDIA_PURCHASE_STATUSES.PENDING,
-        MEDIA_PURCHASE_STATUSES.ACTIVE,
-      ],
-    },
-  });
+const existingPurchase = await MediaPurchase.findOne({
+  buyerId,
+  mediaId,
+  status: {
+    $in: [
+      MEDIA_PURCHASE_STATUSES.PENDING,
+      MEDIA_PURCHASE_STATUSES.ACTIVE,
+    ],
+  },
+});
 
-  if (existingPurchase) {
-    throw new AppError(
-      "You already have a pending purchase or access to this media.",
-      409,
-      "MEDIA_PURCHASE_ALREADY_EXISTS"
-    );
-  }
+if (existingPurchase) {
+  // Reuse an existing pending purchase instead of rejecting a
+  // legitimate payment retry with a different request ID.
+  //
+  // The purchase ID will be used as the stable payment
+  // idempotency key by the controller.
+  return {
+    created: false,
+    purchase: existingPurchase,
+  };
+}
 
   try {
     const [purchase] = await MediaPurchase.create([

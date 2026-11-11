@@ -1,3 +1,4 @@
+
 import AppError from "../utils/AppError.js";
 
 import {
@@ -7,19 +8,6 @@ import {
 import {
   initiateMediaMpesaPayment,
 } from "../services/mediaPaymentInitiation.service.js";
-
-/**
- * ============================================================
- * CREATE MEDIA PURCHASE AND INITIATE M-PESA
- * ============================================================
- *
- * - Buyer identity comes from authentication.
- * - Media price and creator are resolved by the service.
- * - Purchase reservation is idempotent.
- * - Payment initiation is idempotent.
- * - STK acceptance never grants media access.
- * - Settlement remains controlled by backend reconciliation.
- */
 
 export const createMediaPurchaseController = async (
   req,
@@ -38,9 +26,9 @@ export const createMediaPurchaseController = async (
 
     if (!buyerId) {
       throw new AppError(
-        "Authentication is required.",
+        "Authentication is required to purchase media.",
         401,
-        "UNAUTHENTICATED"
+        "AUTHENTICATION_REQUIRED"
       );
     }
 
@@ -54,34 +42,60 @@ export const createMediaPurchaseController = async (
 
     if (!purchase?._id) {
       throw new AppError(
-        "The media purchase could not be reserved.",
+        "Media purchase could not be reserved.",
         500,
         "MEDIA_PURCHASE_RESERVATION_FAILED"
       );
     }
 
     /*
-     * A deterministic, separate identifier is used
-     * for payment initiation retries.
+     * An ACTIVE purchase means settlement has already granted
+     * access. Never initiate another payment for it.
+     */
+    if (purchase.status === "ACTIVE") {
+      return res.status(200).json({
+        success: true,
+        message: "You already have access to this media.",
+        data: {
+          purchaseId: purchase._id,
+          mediaId: purchase.mediaId,
+          amountMinor: purchase.amountMinor,
+          currency: purchase.currency,
+          purchaseStatus: purchase.status,
+          payment: null,
+          paymentVerified: true,
+          mediaAccessGranted: true,
+        },
+      });
+    }
+
+    /*
+     * Use the purchase ID as the stable payment idempotency key.
+     *
+     * Browser retries may have different clientRequestIds, but
+     * the same pending purchase must always resolve to the same
+     * PaymentTransaction.
      */
     const paymentClientRequestId =
-      `media_${clientRequestId}`;
+      `media_${purchase._id.toString()}`;
 
-    const paymentResult =
-      await initiateMediaMpesaPayment({
-        buyerId: buyerId.toString(),
-        purchaseId: purchase._id.toString(),
-        phoneNumber,
-        clientRequestId: paymentClientRequestId,
-      });
+    const paymentResult = await initiateMediaMpesaPayment({
+      buyerId: buyerId.toString(),
+      purchaseId: purchase._id.toString(),
+      phoneNumber,
+      clientRequestId: paymentClientRequestId,
+    });
 
-    return res.status(reservation.created ? 201 : 200).json({
+    return res.status(
+      reservation.created ? 201 : 200
+    ).json({
       success: true,
-      message: paymentResult?.message ||
+      message:
+        paymentResult?.message ||
         "Media purchase reserved. Check your phone for the M-Pesa prompt.",
       data: {
-        purchaseId: purchase._id.toString(),
-        mediaId: purchase.mediaId.toString(),
+        purchaseId: purchase._id,
+        mediaId: purchase.mediaId,
         amountMinor: purchase.amountMinor,
         currency: purchase.currency,
         purchaseStatus: purchase.status,
@@ -93,8 +107,4 @@ export const createMediaPurchaseController = async (
   } catch (error) {
     return next(error);
   }
-};
-
-export default {
-  createMediaPurchaseController,
 };
