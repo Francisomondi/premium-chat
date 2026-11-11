@@ -146,9 +146,14 @@ export default function MessageComposer({
 
   /**
    * TEXTAREA AUTO RESIZE
+   *
+   * Recalculate when returning from image mode,
+   * because the textarea is temporarily unmounted.
    */
 
   useEffect(() => {
+    if (showPaidMediaComposer) return;
+
     const textarea = textareaRef.current;
 
     if (!textarea) return;
@@ -159,7 +164,11 @@ export default function MessageComposer({
       textarea.scrollHeight,
       MAX_TEXTAREA_HEIGHT
     )}px`;
-  }, [draft, normalizedConversationId]);
+  }, [
+    draft,
+    normalizedConversationId,
+    showPaidMediaComposer,
+  ]);
 
   /**
    * DRAFT CHANGE
@@ -253,6 +262,33 @@ export default function MessageComposer({
   };
 
   /**
+   * OPEN IMAGE COMPOSER
+   */
+
+  const handleOpenImageComposer = () => {
+    if (isConversationUnavailable) return;
+
+    setShowPaidMediaComposer(true);
+  };
+
+  /**
+   * CLOSE IMAGE COMPOSER
+   */
+
+  const handleCloseImageComposer = () => {
+    setShowPaidMediaComposer(false);
+  };
+
+  /**
+   * IMAGE MESSAGE SENT
+   */
+
+  const handleImageMessageSent = (message) => {
+    setShowPaidMediaComposer(false);
+    onMessageSent?.(message);
+  };
+
+  /**
    * PLACEHOLDER
    */
 
@@ -279,15 +315,21 @@ export default function MessageComposer({
         className,
       ].join(" ")}
     >
-      {/* ERROR */}
+      {/* TEXT MESSAGE ERROR */}
 
-      {sendError && (
+      {!showPaidMediaComposer && sendError && (
         <div
           role="alert"
-          className="mb-1.5 flex items-center gap-1.5 rounded-md bg-rose-500/10 px-2 py-1.5 text-[9px] text-rose-300"
+          className="mb-1.5 flex min-w-0 items-center gap-1.5 rounded-md bg-rose-500/10 px-2 py-1.5 text-[9px] text-rose-300"
         >
-          <AlertCircle size={12} className="shrink-0" />
-          <span className="break-words">{sendError}</span>
+          <AlertCircle
+            size={12}
+            className="shrink-0"
+          />
+
+          <span className="break-words">
+            {sendError}
+          </span>
         </div>
       )}
 
@@ -298,7 +340,11 @@ export default function MessageComposer({
           role="status"
           className="mb-1.5 flex items-center gap-1.5 rounded-md bg-[#ffcc42]/5 px-2 py-1.5 text-[9px] text-[#ffcc42]"
         >
-          <Clock3 size={12} className="shrink-0" />
+          <Clock3
+            size={12}
+            className="shrink-0"
+          />
+
           <span>
             Try again in{" "}
             {formatRetryCountdown(retryRemainingMs)}.
@@ -309,104 +355,100 @@ export default function MessageComposer({
       {/* IMAGE COMPOSER */}
 
       {showPaidMediaComposer && (
-        <div className="mb-1.5 w-full min-w-0">
+        <div className="w-full min-w-0">
           <ChatImageComposer
             conversationId={normalizedConversationId}
             isCreator={isCreator}
-            onClose={() =>
-              setShowPaidMediaComposer(false)
-            }
-            onMessageSent={(message) => {
-              setShowPaidMediaComposer(false);
-              onMessageSent?.(message);
-            }}
+            onClose={handleCloseImageComposer}
+            onMessageSent={handleImageMessageSent}
           />
         </div>
       )}
 
-      {/* TEXT COMPOSER */}
+      {/* NORMAL TEXT COMPOSER
+          Hidden while image composer is active.
+      */}
 
-      <div className="w-full min-w-0 rounded-lg border border-white/10 bg-[#1a1a20] focus-within:border-[#ffcc42]/40">
-        <textarea
-          ref={textareaRef}
-          value={draft}
-          onChange={handleDraftChange}
-          onKeyDown={handleKeyDown}
-          disabled={isConversationUnavailable}
-          maxLength={MAX_MESSAGE_LENGTH}
-          rows={1}
-          placeholder={placeholder}
-          aria-label="Message"
-          className="block max-h-[100px] min-h-8 w-full resize-none overflow-y-auto bg-transparent px-2.5 py-1.5 text-[11px] leading-4 text-white outline-none placeholder:text-zinc-500 disabled:opacity-50 sm:text-xs"
-        />
+      {!showPaidMediaComposer && (
+        <div className="w-full min-w-0 rounded-lg border border-white/10 bg-[#1a1a20] focus-within:border-[#ffcc42]/40">
+          <textarea
+            ref={textareaRef}
+            value={draft}
+            onChange={handleDraftChange}
+            onKeyDown={handleKeyDown}
+            disabled={isConversationUnavailable}
+            maxLength={MAX_MESSAGE_LENGTH}
+            rows={1}
+            placeholder={placeholder}
+            aria-label="Message"
+            className="block max-h-[100px] min-h-8 w-full resize-none overflow-y-auto bg-transparent px-2.5 py-1.5 text-[11px] leading-4 text-white outline-none placeholder:text-zinc-500 disabled:opacity-50 sm:text-xs"
+          />
 
-        {/* TOOLBAR */}
+          {/* TOOLBAR */}
 
-        <div className="flex min-w-0 items-center justify-between gap-1.5 px-1.5 pb-1.5">
-          <span
-            className={[
-              "hidden text-[9px] sm:inline",
-              remainingCharacters < 100
-                ? "text-[#ffcc42]"
-                : "text-zinc-600",
-            ].join(" ")}
-          >
-            {characterCount}/{MAX_MESSAGE_LENGTH}
-          </span>
-
-          <div className="ml-auto flex shrink-0 items-center gap-1.5">
-            {/* ATTACH IMAGE */}
-
-            <button
-              type="button"
-              onClick={() =>
-                setShowPaidMediaComposer(
-                  (previous) => !previous
-                )
-              }
-              disabled={isConversationUnavailable}
-              aria-label="Attach image"
-              aria-expanded={showPaidMediaComposer}
-              title="Attach image"
-              className="flex h-7 w-7 items-center justify-center rounded-md border border-white/10 text-[#ffcc42] hover:bg-white/5 disabled:opacity-40"
-            >
-              <Paperclip size={13} />
-            </button>
-
-            {/* SEND TEXT */}
-
-            <button
-              type="button"
-              onClick={() => void handleSend()}
-              disabled={!canSend}
-              aria-label="Send message"
-              title="Send message"
+          <div className="flex min-w-0 items-center justify-between gap-1.5 px-1.5 pb-1.5">
+            <span
               className={[
-                "flex h-7 min-w-7 items-center justify-center gap-1 rounded-md px-2 text-[9px] font-bold",
-                canSend
-                  ? "bg-[#ffcc42] text-black hover:bg-[#f2bd2e]"
-                  : "cursor-not-allowed bg-white/10 text-zinc-500",
+                "hidden text-[9px] sm:inline",
+                remainingCharacters < 100
+                  ? "text-[#ffcc42]"
+                  : "text-zinc-600",
               ].join(" ")}
             >
-              {isSendingMessage ? (
-                <Loader2
-                  size={12}
-                  className="animate-spin"
-                />
-              ) : (
-                <>
-                  <span className="hidden sm:inline">
-                    Send
-                  </span>
-                  <Send size={12} />
-                </>
-              )}
-            </button>
+              {characterCount}/{MAX_MESSAGE_LENGTH}
+            </span>
+
+            <div className="ml-auto flex shrink-0 items-center gap-1.5">
+              {/* ATTACH IMAGE */}
+
+              <button
+                type="button"
+                onClick={handleOpenImageComposer}
+                disabled={isConversationUnavailable}
+                aria-label="Attach image"
+                aria-expanded={false}
+                title="Attach image"
+                className="flex h-7 w-7 items-center justify-center rounded-md border border-white/10 text-[#ffcc42] hover:bg-white/5 disabled:opacity-40"
+              >
+                <Paperclip size={13} />
+              </button>
+
+              {/* SEND TEXT */}
+
+              <button
+                type="button"
+                onClick={() => void handleSend()}
+                disabled={!canSend}
+                aria-label="Send message"
+                title="Send message"
+                className={[
+                  "flex h-7 min-w-7 items-center justify-center gap-1 rounded-md px-2 text-[9px] font-bold",
+                  canSend
+                    ? "bg-[#ffcc42] text-black hover:bg-[#f2bd2e]"
+                    : "cursor-not-allowed bg-white/10 text-zinc-500",
+                ].join(" ")}
+              >
+                {isSendingMessage ? (
+                  <Loader2
+                    size={12}
+                    className="animate-spin"
+                  />
+                ) : (
+                  <>
+                    <span className="hidden sm:inline">
+                      Send
+                    </span>
+
+                    <Send size={12} />
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
-      {/* STATUS */}
+      {/* CONVERSATION STATUS */}
 
       {isBlocked && (
         <p className="mt-1 text-center text-[9px] text-rose-400">

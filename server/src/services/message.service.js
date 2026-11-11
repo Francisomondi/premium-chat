@@ -35,28 +35,24 @@ import {
  *
  * IMAGE DISPLAY RULES
  *
- * USER IMAGE:
+  * USER IMAGE:
  * - Must be uploaded by the user.
  * - Must belong to the exact conversation.
- * - Must use PUBLIC access.
- * - Must have zero price.
- * - Displays the original after processing.
+ * - Must use PUBLIC access with zero price.
  *
  * CREATOR IMAGE:
  * - Must be uploaded by the creator.
  * - Must belong to the exact conversation.
- * - Must use PURCHASE_ONLY access.
- * - Must have a positive KES price.
- * - Displays blurred preview and purchase price to users.
- * - Original is available only after verified payment.
+ * - May use PUBLIC access with zero price, or
+ *   PURCHASE_ONLY access with a positive KES price.
+ * - Paid images require verified payment before
+ *   the original image can be accessed.
  *
- * SECURITY:
- * - Sender identity comes from authentication.
- * - Only conversation participants may send.
- * - Media ownership is checked server-side.
- * - Storage keys and signed URLs are never returned.
- * - STK Push acceptance and callbacks never grant access.
- * - Original access is controlled by authorizeMediaAccess.
+ * CONVERSATION IMAGE PROCESSING:
+ * - User and creator conversation images bypass
+ *   processing and moderation.
+ * - Creator gallery uploads retain processing
+ *   and moderation.
  */
 
 const MAX_MESSAGE_LENGTH = 5000;
@@ -453,53 +449,54 @@ export const sendMediaMessage = async ({
    * STEP 4: Enforce sender-specific media policies.
    */
 
-  if (isCreator) {
-    const validCreatorPrice =
-      Number.isSafeInteger(media.priceMinor) &&
-      media.priceMinor > 0;
+if (isCreator) {
+  const isFree =
+    media.accessPolicy === MEDIA_ACCESS_POLICIES.PUBLIC &&
+    media.priceMinor === 0;
 
-    const validCreatorCurrency =
-      media.currency === "KES";
+  const isPaid =
+    media.accessPolicy === MEDIA_ACCESS_POLICIES.PURCHASE_ONLY &&
+    Number.isSafeInteger(media.priceMinor) &&
+    media.priceMinor > 0;
 
-    if (
-      mediaCreatorId !== String(senderId) ||
-      conversationCreatorId !== String(senderId) ||
-      mediaConversationId !== String(conversationId) ||
-      media.accessPolicy !==
-        MEDIA_ACCESS_POLICIES.PURCHASE_ONLY ||
-      !validCreatorPrice ||
-      !validCreatorCurrency
-    ) {
-      throw new AppError(
-        "Creator images must belong to you, be attached to this conversation, and have a positive KES purchase price.",
-        403,
-        "CREATOR_MEDIA_POLICY_INVALID"
-      );
-    }
-  } else {
-    const mediaUploaderId = media.uploaderId
-      ? String(
-          media.uploaderId?._id ??
-            media.uploaderId
-        )
-      : null;
-
-    if (
-      mediaUploaderId !== String(senderId) ||
-      conversationUserId !== String(senderId) ||
-      mediaCreatorId !== conversationCreatorId ||
-      mediaConversationId !== String(conversationId) ||
-      media.accessPolicy !==
-        MEDIA_ACCESS_POLICIES.PUBLIC ||
-      media.priceMinor !== 0
-    ) {
-      throw new AppError(
-        "You can only send your own free images in your conversation.",
-        403,
-        "USER_MEDIA_FORBIDDEN"
-      );
-    }
+  if (
+    mediaCreatorId !== String(senderId) ||
+    conversationCreatorId !== String(senderId) ||
+    mediaConversationId !== String(conversationId) ||
+    (!isFree && !isPaid) ||
+    media.currency !== "KES"
+  ) {
+    throw new AppError(
+      "Creator images must belong to you, be attached to this conversation, and have either free or valid paid access.",
+      403,
+      "CREATOR_MEDIA_POLICY_INVALID"
+    );
   }
+} else {
+  const mediaUploaderId = media.uploaderId
+    ? String(
+        media.uploaderId?._id ??
+          media.uploaderId
+      )
+    : null;
+
+  if (
+    mediaUploaderId !== String(senderId) ||
+    conversationUserId !== String(senderId) ||
+    mediaCreatorId !== conversationCreatorId ||
+    mediaConversationId !== String(conversationId) ||
+    media.accessPolicy !==
+      MEDIA_ACCESS_POLICIES.PUBLIC ||
+    media.priceMinor !== 0 ||
+    media.currency !== "KES"
+  ) {
+    throw new AppError(
+      "You can only send your own free images in your conversation.",
+      403,
+      "USER_MEDIA_FORBIDDEN"
+    );
+  }
+}
 
   /**
    * STEP 5: Verify conversation membership.

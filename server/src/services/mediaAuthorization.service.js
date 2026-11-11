@@ -11,6 +11,7 @@ import {
 import MediaPurchase, {
   MEDIA_PURCHASE_STATUSES,
 } from "../models/MediaPurchase.model.js";
+import Conversation from "../models/Conversation.model.js";
 
 import {
   PAYMENT_PURPOSES,
@@ -284,6 +285,45 @@ if (
     return deny(
       MEDIA_ACCESS_REASONS.VIEWER_NOT_ELIGIBLE
     );
+  }
+
+
+    /**
+   * STEP 5 — CONVERSATION MEDIA PRIVACY
+   *
+   * PUBLIC conversation media is free for the
+   * conversation participants. It is not public
+   * internet content.
+   *
+   * Verify the exact conversation, its creator,
+   * and the viewer's participant identity before
+   * considering any access policy.
+   */
+
+  if (media.conversationId != null) {
+    if (!isValidObjectId(media.conversationId)) {
+      return deny(
+        MEDIA_ACCESS_REASONS.MEDIA_NOT_FOUND
+      );
+    }
+
+    const conversation = await Conversation.findOne({
+      _id: media.conversationId,
+      creatorId: normalizedCreatorId,
+      participants: normalizedViewerId,
+      $or: [
+        { creatorId: normalizedViewerId },
+        { userId: normalizedViewerId },
+      ],
+    })
+      .select("_id creatorId userId participants")
+      .lean();
+
+    if (!conversation) {
+      return deny(
+        MEDIA_ACCESS_REASONS.MEDIA_NOT_FOUND
+      );
+    }
   }
 
   /**

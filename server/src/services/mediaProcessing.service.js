@@ -471,6 +471,196 @@ const uploaderMetadataMatches = media.uploaderId
   };
 };
 
+
+/**
+ * ============================================================
+ * GENERATE PAID CONVERSATION IMAGE PREVIEW
+ * ============================================================
+ *
+ * This is deliberately separate from gallery processing.
+ *
+ * - Only paid creator conversation images are eligible.
+ * - The original remains private.
+ * - Only the blurred preview is generated and stored.
+ * - No MediaProcessingJob is created.
+ * - The caller marks the conversation image READY after
+ *   this function succeeds.
+ */
+
+
+
+
+export const generatePaidConversationPreview = async ({
+  mediaId,
+  allowRepair = false,
+}) => {
+  validateMediaId(mediaId);
+
+  // Normal uploads and repairs have separate, tightly scoped states.
+  const lifecycleFilter = allowRepair
+    ? {
+        status: MEDIA_STATUSES.READY,
+        moderationStatus: MEDIA_MODERATION_STATUSES.APPROVED,
+      }
+    : {
+        status: {
+          $in: [
+            MEDIA_STATUSES.UPLOADING,
+            MEDIA_STATUSES.PROCESSING,
+          ],
+        },
+        moderationStatus: MEDIA_MODERATION_STATUSES.PENDING,
+      };
+
+  const mediaFilter = {
+    _id: mediaId,
+    mediaType: MEDIA_TYPES.IMAGE,
+    accessPolicy: "PURCHASE_ONLY",
+    conversationId: { $ne: null },
+    deletedAt: null,
+    previewStorageKey: null,
+    ...lifecycleFilter,
+  };
+
+  const media = await Media.findOne(mediaFilter).select(
+    "+storageKey +previewStorageKey"
+  );
+
+  if (!media) {
+    throw new AppError(
+      "Paid conversation image is unavailable or does not qualify for preview generation.",
+      404,
+      "PAID_CHAT_MEDIA_NOT_FOUND"
+    );
+  }
+
+  if (
+    !media.storageKey ||
+    !media.creatorId ||
+    !media.uploaderId ||
+    String(media.creatorId) !== String(media.uploaderId) ||
+    !Number.isSafeInteger(media.priceMinor) ||
+    media.priceMinor <= 0 ||
+    media.currency !== "KES" ||
+    !Number.isSafeInteger(media.fileSize) ||
+    media.fileSize <= 0 ||
+    media.fileSize > MAX_IMAGE_BYTES
+  ) {
+    throw new AppError(
+      "Paid conversation image metadata is invalid.",
+      422,
+      "PAID_CHAT_MEDIA_METADATA_INVALID"
+    );
+  }
+
+  const { client, bucket } = requireMediaStorage();
+
+  let object;
+
+  try {
+    object = await client.send(
+      new GetObjectCommand({
+        Bucket: bucket,
+        Key: media.storageKey,
+      })
+    );
+  } catch {
+    throw new AppError(
+      "Unable to retrieve the original conversation image.",
+      503,
+      "PAID_CHAT_MEDIA_DOWNLOAD_FAILED"
+    );
+  }
+
+  const metadata = object.Metadata || {};
+
+  if (
+    Number(object.ContentLength) !== media.fileSize ||
+    object.ContentType !== media.mimeType ||
+    metadata.mediaid !== String(media._id).toLowerCase() ||
+    metadata.creatorid !== String(media.creatorId).toLowerCase() ||
+    metadata.uploaderid !== String(media.uploaderId).toLowerCase()
+  ) {
+    throw new AppError(
+      "The original conversation image failed storage verification.",
+      422,
+      "PAID_CHAT_MEDIA_METADATA_MISMATCH"
+    );
+  }
+
+  const originalBuffer = await readObjectStream(
+    object.Body,
+    media.fileSize
+  );
+
+  await inspectImage(originalBuffer, media.mimeType);
+
+  const previewBuffer = await generatePreview(originalBuffer);
+
+  const previewStorageKey =
+    `private/previews/${media.creatorId}/${media._id}/teaser-${crypto
+      .createHash("sha256")
+      .update(String(media._id))
+      .digest("hex")
+      .slice(0, 16)}.webp`;
+
+  try {
+    await client.send(
+      new PutObjectCommand({
+        Bucket: bucket,
+        Key: previewStorageKey,
+        Body: previewBuffer,
+        ContentLength: previewBuffer.length,
+        ContentType: "image/webp",
+        CacheControl: "private, no-store, max-age=0",
+        Metadata: {
+          mediaid: String(media._id),
+          creatorid: String(media.creatorId),
+          preview: "true",
+        },
+      })
+    );
+  } catch {
+    throw new AppError(
+      "Unable to store the blurred conversation preview.",
+      503,
+      "PAID_CHAT_PREVIEW_STORAGE_FAILED"
+    );
+  }
+
+  // The lifecycle and missing-preview conditions are checked again
+  // before saving, preventing an overwrite or stale-state update.
+  const updatedMedia = await Media.findOneAndUpdate(
+    mediaFilter,
+    {
+      $set: {
+        previewStorageKey,
+      },
+    },
+    {
+      returnDocument: "after",
+      runValidators: true,
+    }
+  ).select("_id previewStorageKey");
+
+  if (!updatedMedia) {
+    throw new AppError(
+      "The paid conversation image changed while its preview was generated.",
+      409,
+      "PAID_CHAT_PREVIEW_STATE_CHANGED"
+    );
+  }
+
+  return {
+    mediaId: String(updatedMedia._id),
+    previewGenerated: true,
+    repaired: allowRepair,
+  };
+};
+
+
+
 export default {
   processCreatorImage,
+  generatePaidConversationPreview,
 };

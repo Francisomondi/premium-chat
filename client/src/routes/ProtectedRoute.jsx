@@ -7,24 +7,6 @@ import {
 
 import { useAuthStore } from "../store/useAuthStore.js";
 
-/**
- * ============================================================
- * PREMIUMCHAT PROTECTED ROUTE
- * ============================================================
- *
- * Protects authenticated frontend routes.
- *
- * Uses actual fields returned by GET /api/auth/me:
- *
- * - role
- * - accountStatus
- * - ageVerificationStatus
- * - creatorApplicationStatus
- *
- * IMPORTANT:
- * Backend authorization remains the source of truth.
- */
-
 const ACCOUNT_ROLES = Object.freeze({
   USER: "USER",
   CREATOR: "CREATOR",
@@ -43,17 +25,6 @@ const CREATOR_APPLICATION_STATUSES = Object.freeze({
   APPROVED: "APPROVED",
 });
 
-/**
- * ============================================================
- * CHECK CREATOR ELIGIBILITY
- * ============================================================
- *
- * This check controls frontend navigation only.
- *
- * Backend authorization must independently verify
- * age verification validity, including expiration.
- */
-
 const hasCreatorAccess = (user) => {
   return (
     user?.role === ACCOUNT_ROLES.CREATOR &&
@@ -64,17 +35,6 @@ const hasCreatorAccess = (user) => {
       CREATOR_APPLICATION_STATUSES.APPROVED
   );
 };
-
-/**
- * ============================================================
- * GET SAFE DASHBOARD PATH
- * ============================================================
- *
- * Keep this consistent with LoginPage and Navbar.
- *
- * A creator who has not completed verification
- * or approval is directed to the general dashboard.
- */
 
 const getDashboardPath = (user) => {
   if (
@@ -91,35 +51,20 @@ const getDashboardPath = (user) => {
   return "/dashboard";
 };
 
-/**
- * ============================================================
- * PROTECTED ROUTE COMPONENT
- * ============================================================
- */
-
 export default function ProtectedRoute({
   allowedRoles = [],
   requireCreatorApproval = false,
+  requireAgeVerification = true,
 }) {
   const location = useLocation();
 
-  const user = useAuthStore(
-    (state) => state.user
-  );
-
+  const user = useAuthStore((state) => state.user);
   const isAuthenticated = useAuthStore(
     (state) => state.isAuthenticated
   );
-
   const isInitializing = useAuthStore(
     (state) => state.isInitializing
   );
-
-  /**
-   * ==========================================================
-   * WAIT FOR AUTHENTICATION INITIALIZATION
-   * ==========================================================
-   */
 
   if (isInitializing) {
     return (
@@ -139,12 +84,6 @@ export default function ProtectedRoute({
     );
   }
 
-  /**
-   * ==========================================================
-   * REQUIRE AUTHENTICATION
-   * ==========================================================
-   */
-
   if (!isAuthenticated || !user) {
     const requestedPath =
       location.pathname +
@@ -161,12 +100,6 @@ export default function ProtectedRoute({
       />
     );
   }
-
-  /**
-   * ==========================================================
-   * REQUIRE ACTIVE ACCOUNT
-   * ==========================================================
-   */
 
   if (
     user.accountStatus !== ACCOUNT_STATUSES.ACTIVE
@@ -189,10 +122,32 @@ export default function ProtectedRoute({
   }
 
   /**
-   * ==========================================================
-   * ROLE AUTHORIZATION
-   * ==========================================================
+   * Every authenticated role must complete age
+   * verification before accessing protected pages.
+   *
+   * The age-verification route explicitly disables
+   * this check so unverified users can submit their DOB.
    */
+  if (
+    requireAgeVerification &&
+    user.ageVerificationStatus !==
+      AGE_VERIFICATION_STATUSES.VERIFIED
+  ) {
+    const requestedPath =
+      location.pathname +
+      location.search +
+      location.hash;
+
+    return (
+      <Navigate
+        to="/age-verification"
+        replace
+        state={{
+          from: requestedPath,
+        }}
+      />
+    );
+  }
 
   if (
     allowedRoles.length > 0 &&
@@ -225,57 +180,30 @@ export default function ProtectedRoute({
     );
   }
 
-  /**
-   * ==========================================================
-   * CREATOR APPROVAL AND AGE VERIFICATION
-   * ==========================================================
-   */
-if (
-  requireCreatorApproval &&
-  !hasCreatorAccess(user)
-) {
   if (
-    user.role === ACCOUNT_ROLES.CREATOR &&
-    user.ageVerificationStatus !==
-      AGE_VERIFICATION_STATUSES.VERIFIED
+    requireCreatorApproval &&
+    !hasCreatorAccess(user)
   ) {
     return (
-      <Navigate
-        to="/age-verification"
-        replace
-        state={{
-          from: location.pathname,
-        }}
-      />
+      <section className="flex min-h-[60vh] items-center justify-center px-4">
+        <div className="w-full max-w-lg rounded-2xl border border-border bg-surface p-8 text-center">
+          <h1 className="text-2xl font-bold">
+            Creator Access Unavailable
+          </h1>
+
+          <p className="mt-4 text-sm leading-7 text-muted">
+            Creator features require an approved creator
+            application and completed adult age verification.
+          </p>
+
+          <p className="mt-3 text-sm leading-7 text-muted">
+            You can continue using your general account
+            dashboard while these requirements are pending.
+          </p>
+        </div>
+      </section>
     );
   }
-
-  return (
-    <section className="flex min-h-[60vh] items-center justify-center px-4">
-      <div className="w-full max-w-lg rounded-2xl border border-border bg-surface p-8 text-center">
-        <h1 className="text-2xl font-bold">
-          Creator Access Unavailable
-        </h1>
-
-        <p className="mt-4 text-sm leading-7 text-muted">
-          Creator features require an approved creator
-          application and completed adult age verification.
-        </p>
-
-        <p className="mt-3 text-sm leading-7 text-muted">
-          You can continue using your general account
-          dashboard while these requirements are pending.
-        </p>
-      </div>
-    </section>
-  );
-}
-
-  /**
-   * ==========================================================
-   * AUTHORIZED
-   * ==========================================================
-   */
 
   return <Outlet />;
 }

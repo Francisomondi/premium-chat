@@ -1,3 +1,4 @@
+
 import mongoose from "mongoose";
 
 import {
@@ -16,15 +17,20 @@ import {
 } from "../services/mediaUpload.service.js";
 
 import {
+  generatePaidConversationPreview,
+} from "../services/mediaProcessing.service.js";
+
+import {
+  MEDIA_ACCESS_POLICIES,
+} from "../constants/mediaAccess.constants.js";
+
+import {
   requireMediaStorage,
 } from "../config/mediaStorage.js";
-
 
 import MediaProcessingJob, {
   MEDIA_JOB_STATUSES,
 } from "../models/MediaProcessingJob.model.js";
-
-
 
 /**
  * ============================================================
@@ -36,8 +42,10 @@ import MediaProcessingJob, {
  *
  * The client uploads directly to private R2 storage.
  *
- * Media remains unavailable to viewers until verification,
- * processing and moderation are complete.
+ * Gallery media remains unavailable until processing and
+ * moderation are complete.
+ *
+ * Conversation images follow their separate completion path.
  */
 
 export const createMediaUploadController = async (
@@ -57,33 +65,33 @@ export const createMediaUploadController = async (
     }
 
     const {
-    destination,
-    conversationId,
-    mediaType,
-    mimeType,
-    fileSize,
-    accessPolicy,
-    priceMinor,
-    currency,
-    rightsConfirmed,
-    allDepictedAdultsAndConsented,
-    attestationVersion,
-  } = req.body;
+      destination,
+      conversationId,
+      mediaType,
+      mimeType,
+      fileSize,
+      accessPolicy,
+      priceMinor,
+      currency,
+      rightsConfirmed,
+      allDepictedAdultsAndConsented,
+      attestationVersion,
+    } = req.body;
 
-  const result = await createMediaUploadIntent({
-    uploaderId: String(userId),
-    destination,
-    conversationId,
-    mediaType,
-    mimeType,
-    fileSize,
-    accessPolicy,
-    priceMinor,
-    currency,
-    rightsConfirmed,
-    allDepictedAdultsAndConsented,
-    attestationVersion,
-  });
+    const result = await createMediaUploadIntent({
+      uploaderId: String(userId),
+      destination,
+      conversationId,
+      mediaType,
+      mimeType,
+      fileSize,
+      accessPolicy,
+      priceMinor,
+      currency,
+      rightsConfirmed,
+      allDepictedAdultsAndConsented,
+      attestationVersion,
+    });
 
     return res.status(201).json({
       success: true,
@@ -94,7 +102,6 @@ export const createMediaUploadController = async (
     return next(error);
   }
 };
-
 
 /**
  * ============================================================
@@ -109,11 +116,17 @@ export const createMediaUploadController = async (
  * - Uploaded MIME type
  * - Media ID metadata
  * - Creator ID metadata
+ * - Uploader ID metadata
  *
- * A successful upload moves the record from UPLOADING
- * to PROCESSING.
+ * Conversation images:
+ * - Bypass the gallery processing queue.
+ * - Free images become READY and APPROVED immediately.
+ * - Paid creator images receive a private blurred preview
+ *   before becoming READY and APPROVED.
  *
- * This does NOT approve or publish the media.
+ * Gallery images:
+ * - Continue through the existing processing queue.
+ * - Remain pending moderation.
  */
 
 export const completeMediaUploadController = async (
@@ -141,22 +154,21 @@ export const completeMediaUploadController = async (
       );
     }
 
-    // Load the upload record, including its private storage key.
-const media = await Media.findOne({
-  _id: mediaId,
-  $or: [
-    { uploaderId: userId },
-    { uploaderId: null, creatorId: userId },
-  ],
-  status: {
-    $in: [
-      MEDIA_STATUSES.UPLOADING,
-      MEDIA_STATUSES.PROCESSING,
-    ],
-  },
-  moderationStatus: MEDIA_MODERATION_STATUSES.PENDING,
-  deletedAt: null,
-}).select("+storageKey");
+    const media = await Media.findOne({
+      _id: mediaId,
+      $or: [
+        { uploaderId: userId },
+        { uploaderId: null, creatorId: userId },
+      ],
+      status: {
+        $in: [
+          MEDIA_STATUSES.UPLOADING,
+          MEDIA_STATUSES.PROCESSING,
+        ],
+      },
+      moderationStatus: MEDIA_MODERATION_STATUSES.PENDING,
+      deletedAt: null,
+    }).select("+storageKey");
 
     if (!media) {
       throw new AppError(
@@ -166,7 +178,6 @@ const media = await Media.findOne({
       );
     }
 
-    // An upload must have a valid expiry time.
     if (
       !media.uploadExpiresAt ||
       media.uploadExpiresAt <= new Date()
@@ -186,11 +197,7 @@ const media = await Media.findOne({
       );
     }
 
-    // Get the configured private R2 bucket.
-    const {
-      client,
-      bucket,
-    } = requireMediaStorage();
+    const { client, bucket } = requireMediaStorage();
 
     let object;
 
@@ -215,7 +222,6 @@ const media = await Media.findOne({
         );
       }
 
-      // Do not expose storage credentials or internal errors.
       throw new AppError(
         "Unable to verify the uploaded file. Please try again.",
         503,
@@ -223,7 +229,7 @@ const media = await Media.findOne({
       );
     }
 
-    // Verify the actual object size.
+    // Verify actual object size.
     if (Number(object.ContentLength) !== media.fileSize) {
       throw new AppError(
         "The uploaded file size does not match the declared file size.",
@@ -232,7 +238,7 @@ const media = await Media.findOne({
       );
     }
 
-    // Verify the actual MIME type.
+    // Verify actual MIME type.
     if (object.ContentType !== media.mimeType) {
       throw new AppError(
         "The uploaded file type does not match the declared file type.",
@@ -241,41 +247,171 @@ const media = await Media.findOne({
       );
     }
 
-    // Verify the metadata added when the presigned URL was created.
-const metadata = object.Metadata || {};
+    // Verify R2 object metadata.
+    const metadata = object.Metadata || {};
 
-const expectedCreatorId = String(media.creatorId).toLowerCase();
-const expectedUploaderId = String(
-  media.uploaderId || media.creatorId
-).toLowerCase();
+    const expectedCreatorId =
+      String(media.creatorId).toLowerCase();
 
-const creatorMetadataMatches =
-  metadata.creatorid === expectedCreatorId;
+    const expectedUploaderId =
+      String(media.uploaderId || media.creatorId).toLowerCase();
 
-const uploaderMetadataMatches = media.uploaderId
-  ? metadata.uploaderid === expectedUploaderId
-  : metadata.creatorid === expectedUploaderId;
+    const creatorMetadataMatches =
+      metadata.creatorid === expectedCreatorId;
 
-if (
-  metadata.mediaid !== String(media._id).toLowerCase() ||
-  !creatorMetadataMatches ||
-  !uploaderMetadataMatches
-) {
-  throw new AppError(
-    "The uploaded file metadata could not be verified.",
-    422,
-    "MEDIA_METADATA_MISMATCH"
-  );
-}
+    const uploaderMetadataMatches = media.uploaderId
+      ? metadata.uploaderid === expectedUploaderId
+      : metadata.creatorid === expectedUploaderId;
 
+    if (
+      metadata.mediaid !== String(media._id).toLowerCase() ||
+      !creatorMetadataMatches ||
+      !uploaderMetadataMatches
+    ) {
+      throw new AppError(
+        "The uploaded file metadata could not be verified.",
+        422,
+        "MEDIA_METADATA_MISMATCH"
+      );
+    }
 
     /**
      * ========================================================
-     * TRANSITION MEDIA TO PROCESSING
+     * CONVERSATION IMAGE COMPLETION
      * ========================================================
      *
-     * Only transition UPLOADING records.
-     * Repeated completion requests may reuse PROCESSING records.
+     * Conversation images bypass gallery processing and
+     * moderation jobs.
+     *
+     * APPROVED is used here as the availability state required
+     * by the existing media authorization contract. It does
+     * not replace verified-purchase authorization.
+     *
+     * PUBLIC conversation media is free to eligible
+     * authenticated conversation participants. It is not
+     * publicly accessible over the internet.
+     *
+     * PURCHASE_ONLY creator media remains locked until the
+     * existing verified-purchase authorization permits access.
+     */
+
+    const isConversationImage =
+      Boolean(media.conversationId) &&
+      media.mediaType === "IMAGE";
+
+    if (isConversationImage) {
+      const isCreatorUploader =
+        String(media.uploaderId || media.creatorId) ===
+        String(media.creatorId);
+
+      const isUserUploader =
+        String(media.uploaderId) === String(userId) &&
+        String(media.creatorId) !== String(userId);
+
+      const isFree =
+        media.accessPolicy === MEDIA_ACCESS_POLICIES.PUBLIC &&
+        media.priceMinor === 0;
+
+      const isPaid =
+        media.accessPolicy === MEDIA_ACCESS_POLICIES.PURCHASE_ONLY &&
+        Number.isSafeInteger(media.priceMinor) &&
+        media.priceMinor > 0;
+
+      const validCreatorUpload =
+        isCreatorUploader && (isFree || isPaid);
+
+      const validUserUpload =
+        isUserUploader && isFree;
+
+      if (
+        media.currency !== "KES" ||
+        (!validCreatorUpload && !validUserUpload)
+      ) {
+        throw new AppError(
+          "The conversation image has an invalid access configuration.",
+          422,
+          "CHAT_MEDIA_POLICY_INVALID"
+        );
+      }
+
+      const validStates = [
+        MEDIA_STATUSES.UPLOADING,
+        MEDIA_STATUSES.PROCESSING,
+      ];
+
+      if (!validStates.includes(media.status)) {
+        throw new AppError(
+          "The conversation image is not in a valid completion state.",
+          409,
+          "CHAT_MEDIA_INVALID_STATE"
+        );
+      }
+
+      // Paid creator images need a blurred private preview
+      // before they can become available to conversation viewers.
+      //
+      // This helper does not create a gallery processing job.
+      if (isCreatorUploader && isPaid) {
+        await generatePaidConversationPreview({
+          mediaId: String(media._id),
+        });
+      }
+
+      const updatedMedia = await Media.findOneAndUpdate(
+        {
+          _id: media._id,
+          $or: [
+            { uploaderId: userId },
+            { uploaderId: null, creatorId: userId },
+          ],
+          status: {
+            $in: validStates,
+          },
+          moderationStatus: MEDIA_MODERATION_STATUSES.PENDING,
+          deletedAt: null,
+          uploadExpiresAt: {
+            $gt: new Date(),
+          },
+        },
+        {
+          $set: {
+            status: MEDIA_STATUSES.READY,
+            moderationStatus: MEDIA_MODERATION_STATUSES.APPROVED,
+          },
+        },
+        {
+          returnDocument: "after",
+          runValidators: true,
+        }
+      ).select("_id status moderationStatus");
+
+      if (!updatedMedia) {
+        throw new AppError(
+          "The conversation image upload could not be completed because its status changed or its session expired.",
+          409,
+          "MEDIA_UPLOAD_STATE_CHANGED"
+        );
+      }
+
+      // Intentionally do not create a MediaProcessingJob.
+      return res.status(200).json({
+        success: true,
+        message: "Conversation image uploaded successfully.",
+        data: {
+          mediaId: String(updatedMedia._id),
+          status: updatedMedia.status,
+          moderationStatus: updatedMedia.moderationStatus,
+        },
+      });
+    }
+
+    /**
+     * ========================================================
+     * CREATOR GALLERY COMPLETION
+     * ========================================================
+     *
+     * Gallery uploads retain their existing processing and
+     * moderation workflow.
      */
 
     let updatedMedia;
@@ -285,11 +421,11 @@ if (
         {
           _id: media._id,
           ...(media.uploaderId
-          ? { uploaderId: userId }
-          : {
-              uploaderId: null,
-              creatorId: userId,
-            }),
+            ? { uploaderId: userId }
+            : {
+                uploaderId: null,
+                creatorId: userId,
+              }),
           status: MEDIA_STATUSES.UPLOADING,
           moderationStatus: MEDIA_MODERATION_STATUSES.PENDING,
           deletedAt: null,
@@ -303,7 +439,7 @@ if (
           },
         },
         {
-          new: true,
+          returnDocument: "after",
         }
       ).select("_id status moderationStatus");
 
@@ -314,18 +450,15 @@ if (
           "MEDIA_UPLOAD_STATE_CHANGED"
         );
       }
-    } else {
+    } else if (media.status === MEDIA_STATUSES.PROCESSING) {
       updatedMedia = media;
+    } else {
+      throw new AppError(
+        "The creator media upload is not in a valid completion state.",
+        409,
+        "CREATOR_MEDIA_INVALID_STATE"
+      );
     }
-
-    /**
-     * ========================================================
-     * CREATE OR REUSE PROCESSING JOB
-     * ========================================================
-     *
-     * The unique mediaId index prevents duplicate jobs.
-     * $setOnInsert preserves existing job state on retries.
-     */
 
     await MediaProcessingJob.findOneAndUpdate(
       {
@@ -342,7 +475,7 @@ if (
       },
       {
         upsert: true,
-        new: true,
+        returnDocument: "after",
         setDefaultsOnInsert: true,
       }
     );
@@ -350,7 +483,7 @@ if (
     return res.status(202).json({
       success: true,
       message:
-        "Upload verified successfully. Media is awaiting server-side processing and moderation.",
+        "Creator gallery upload verified successfully. Media is awaiting server-side processing and moderation.",
       data: {
         mediaId: String(updatedMedia._id),
         status: updatedMedia.status,

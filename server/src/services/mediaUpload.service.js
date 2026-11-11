@@ -290,14 +290,16 @@ const validateMediaPricing = ({
  * Conversation access rules are server-enforced.
  *
  * CREATOR:
+ * PUBLIC + zero price, OR
  * PURCHASE_ONLY + positive KES price.
  *
  * USER:
- * PUBLIC + zero KES price.
+ * PUBLIC + zero KES price only.
  *
  * Gallery uploads retain their existing configurable
  * creator access policies.
  */
+
 const resolveUploadAccess = ({
   destination,
   isCreator,
@@ -305,7 +307,11 @@ const resolveUploadAccess = ({
   priceMinor,
   currency,
 }) => {
-  if (destination !== "CONVERSATION") {
+  /**
+   * GALLERY:
+   * Preserve the existing gallery pricing and access policies.
+   */
+  if (destination === "GALLERY") {
     return {
       accessPolicy,
       priceMinor,
@@ -313,50 +319,68 @@ const resolveUploadAccess = ({
     };
   }
 
+  /**
+   * CONVERSATION:
+   * Conversation images are private to conversation participants.
+   * PUBLIC means free for those participants, not public internet access.
+   */
+  if (destination !== "CONVERSATION") {
+    throw new AppError(
+      "Invalid media upload destination.",
+      400,
+      "INVALID_MEDIA_DESTINATION"
+    );
+  }
+
   if (currency !== "KES") {
     throw new AppError(
-      "Conversation images must use KES.",
+      "Conversation images must use KES currency.",
       400,
       "CHAT_MEDIA_CURRENCY_INVALID"
     );
   }
 
+  /**
+   * CREATOR:
+   * FREE = PUBLIC + zero price.
+   * PAID = PURCHASE_ONLY + positive price.
+   */
   if (isCreator) {
-    if (
-      accessPolicy !== MEDIA_ACCESS_POLICIES.PURCHASE_ONLY
-    ) {
-      throw new AppError(
-        "Creator conversation images must use purchase-only access.",
-        400,
-        "CREATOR_CHAT_MEDIA_MUST_BE_PAID"
-      );
-    }
+    const isFree =
+      accessPolicy === MEDIA_ACCESS_POLICIES.PUBLIC &&
+      priceMinor === 0;
 
-    if (
-      !Number.isSafeInteger(priceMinor) ||
-      priceMinor <= 0
-    ) {
+    const isPaid =
+      accessPolicy === MEDIA_ACCESS_POLICIES.PURCHASE_ONLY &&
+      Number.isSafeInteger(priceMinor) &&
+      priceMinor > 0;
+
+    if (!isFree && !isPaid) {
       throw new AppError(
-        "Creator conversation images must have a positive KES price.",
+        "Creator conversation images must be either free or paid.",
         400,
-        "CREATOR_CHAT_MEDIA_PRICE_REQUIRED"
+        "CREATOR_CHAT_MEDIA_POLICY_INVALID"
       );
     }
 
     return {
-      accessPolicy: MEDIA_ACCESS_POLICIES.PURCHASE_ONLY,
+      accessPolicy,
       priceMinor,
       currency: "KES",
     };
   }
 
+  /**
+   * USER:
+   * User conversation images are always free.
+   */
   if (
     accessPolicy !== MEDIA_ACCESS_POLICIES.PUBLIC ||
     priceMinor !== 0
   ) {
     throw new AppError(
-      "User conversation images must be free and publicly accessible.",
-      403,
+      "User conversation images must be free.",
+      400,
       "USER_CHAT_MEDIA_MUST_BE_FREE"
     );
   }

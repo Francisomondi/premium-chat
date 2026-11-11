@@ -9,7 +9,6 @@ import Media, {
 import MediaPurchase, {
   MEDIA_PURCHASE_STATUSES,
 } from "../models/MediaPurchase.model.js";
-import CreatorMonetization from "../models/CreatorMonetization.model.js";
 import PaymentTransaction from "../models/PaymentTransaction.model.js";
 
 import {
@@ -142,22 +141,15 @@ const reserveMediaPurchase = async ({
     );
   }
 
-  const monetization = await CreatorMonetization.findOne({
-    creatorId: media.creatorId,
-    isEnabled: true,
-    "paidMedia.isEnabled": true,
-  }).select("creatorId isEnabled paidMedia currency");
-
-  if (
-    !monetization ||
-    monetization.currency !== media.currency
-  ) {
-    throw new AppError(
-      "The creator is not currently accepting media purchases.",
-      409,
-      "MEDIA_PURCHASES_DISABLED"
-    );
-  }
+  /**
+   * IMPORTANT:
+   * Paid-media purchases are always available as a platform
+   * feature. Creator-level monetization switches must not
+   * disable an otherwise eligible individual media purchase.
+   *
+   * Media approval, access policy, price, buyer eligibility,
+   * and payment verification remain mandatory.
+   */
 
   const existingRequest = await MediaPurchase.findOne({
     buyerId,
@@ -290,7 +282,6 @@ const linkMediaPurchasePayment = async ({
         );
       }
 
-      // Idempotent retry: the same payment is already linked.
       if (purchase.paymentId) {
         if (purchase.paymentId.toString() === paymentId) {
           result = {

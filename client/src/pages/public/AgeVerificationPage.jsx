@@ -1,5 +1,13 @@
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+
+import {
+  useEffect,
+  useState,
+} from "react";
+
+import {
+  useLocation,
+  useNavigate,
+} from "react-router-dom";
 
 import {
   submitDateOfBirth,
@@ -26,10 +34,67 @@ const getErrorMessage = (error) => {
   );
 };
 
+const getDashboardPath = (user) => {
+  if (
+    user?.role === "ADMIN" &&
+    user?.accountStatus === "ACTIVE"
+  ) {
+    return "/admin/dashboard";
+  }
+
+  const hasApprovedCreatorAccess =
+    user?.role === "CREATOR" &&
+    user?.accountStatus === "ACTIVE" &&
+    user?.creatorApplicationStatus === "APPROVED" &&
+    user?.ageVerificationStatus === "VERIFIED";
+
+  if (hasApprovedCreatorAccess) {
+    return "/creator/dashboard";
+  }
+
+  return "/dashboard";
+};
+
+const getReturnPath = (location, user) => {
+  const requestedPath = location.state?.from;
+
+  if (
+    typeof requestedPath === "string" &&
+    requestedPath.startsWith("/") &&
+    !requestedPath.startsWith("//") &&
+    !requestedPath.startsWith("/age-verification")
+  ) {
+    return requestedPath;
+  }
+
+  if (
+    requestedPath &&
+    typeof requestedPath === "object"
+  ) {
+    const pathname = requestedPath.pathname || "";
+
+    if (
+      pathname.startsWith("/") &&
+      !pathname.startsWith("//") &&
+      !pathname.startsWith("/age-verification")
+    ) {
+      return (
+        pathname +
+        (requestedPath.search || "") +
+        (requestedPath.hash || "")
+      );
+    }
+  }
+
+  return getDashboardPath(user);
+};
+
 export default function AgeVerificationPage() {
   const navigate = useNavigate();
+  const location = useLocation();
 
   const user = useAuthStore((state) => state.user);
+
   const refreshAuthenticatedUser = useAuthStore(
     (state) => state.refreshAuthenticatedUser
   );
@@ -37,13 +102,24 @@ export default function AgeVerificationPage() {
   const [dateOfBirth, setDateOfBirth] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
+
+  /**
+   * Already-verified users should not remain
+   * on the age-verification page.
+   */
+  useEffect(() => {
+    if (user?.ageVerificationStatus === "VERIFIED") {
+      navigate(
+        getReturnPath(location, user),
+        { replace: true }
+      );
+    }
+  }, [user, location, navigate]);
 
   const handleSubmit = async (event) => {
     event.preventDefault();
 
     setError("");
-    setSuccess("");
 
     if (!dateOfBirth) {
       setError("Please enter your date of birth.");
@@ -66,20 +142,16 @@ export default function AgeVerificationPage() {
         );
       }
 
-      setSuccess(
-        "Your date of birth has been submitted successfully."
-      );
-
-      const hasApprovedCreatorAccess =
-        updatedUser.role === "CREATOR" &&
-        updatedUser.accountStatus === "ACTIVE" &&
-        updatedUser.creatorApplicationStatus === "APPROVED" &&
-        updatedUser.ageVerificationStatus === "VERIFIED";
+      if (
+        updatedUser.ageVerificationStatus !== "VERIFIED"
+      ) {
+        throw new Error(
+          "Your age verification could not be confirmed. Please try again."
+        );
+      }
 
       navigate(
-        hasApprovedCreatorAccess
-          ? "/creator/dashboard"
-          : "/dashboard",
+        getReturnPath(location, updatedUser),
         { replace: true }
       );
     } catch (submissionError) {
@@ -104,11 +176,14 @@ export default function AgeVerificationPage() {
           <p className="mt-3 text-sm leading-7 text-muted">
             PremiumChat is intended for adults aged 18 and
             above. Enter your date of birth to complete the
-            self-declared age check.
+            self-declared age check before accessing your account.
           </p>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-5">
+        <form
+          onSubmit={handleSubmit}
+          className="space-y-5"
+        >
           <div>
             <label
               htmlFor="dateOfBirth"
@@ -153,15 +228,6 @@ export default function AgeVerificationPage() {
               className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-600"
             >
               {error}
-            </div>
-          )}
-
-          {success && (
-            <div
-              role="status"
-              className="rounded-xl border border-green-500/30 bg-green-500/10 px-4 py-3 text-sm text-green-600"
-            >
-              {success}
             </div>
           )}
 

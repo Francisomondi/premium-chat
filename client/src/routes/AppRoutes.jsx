@@ -33,9 +33,7 @@ export default function AppRoutes() {
     <Routes>
       <Route element={<MainLayout />}>
 
-        {/* ============================================= */}
-        {/* PUBLIC ROUTES                                 */}
-        {/* ============================================= */}
+        {/* PUBLIC ROUTES */}
 
         <Route
           path="/"
@@ -62,9 +60,7 @@ export default function AppRoutes() {
           element={<CreatorProfilePage />}
         />
 
-        {/* ============================================= */}
-        {/* DEVELOPMENT DIAGNOSTICS                       */}
-        {/* ============================================= */}
+        {/* DEVELOPMENT DIAGNOSTICS */}
 
         {import.meta.env.DEV && (
           <Route
@@ -73,9 +69,22 @@ export default function AppRoutes() {
           />
         )}
 
-        {/* ============================================= */}
-        {/* AUTHENTICATED USER ROUTES                     */}
-        {/* ============================================= */}
+        {/* AGE VERIFICATION */}
+
+        <Route
+          element={
+            <ProtectedRoute
+              requireAgeVerification={false}
+            />
+          }
+        >
+          <Route
+            path="/age-verification"
+            element={<AgeVerificationPage />}
+          />
+        </Route>
+
+        {/* AUTHENTICATED USER ROUTES */}
 
         <Route element={<ProtectedRoute />}>
           <Route
@@ -87,16 +96,9 @@ export default function AppRoutes() {
             path="/messages"
             element={<ChatPage />}
           />
-
-          <Route
-            path="/age-verification"
-            element={<AgeVerificationPage />}
-          />
         </Route>
 
-        {/* ============================================= */}
-        {/* CREATOR ROUTES                                */}
-        {/* ============================================= */}
+        {/* CREATOR ROUTES */}
 
         <Route
           element={
@@ -117,9 +119,7 @@ export default function AppRoutes() {
           />
         </Route>
 
-        {/* ============================================= */}
-        {/* ADMIN ROUTES                                  */}
-        {/* ============================================= */}
+        {/* ADMIN ROUTES */}
 
         <Route
           element={
@@ -134,9 +134,7 @@ export default function AppRoutes() {
           />
         </Route>
 
-        {/* ============================================= */}
-        {/* 404                                           */}
-        {/* ============================================= */}
+        {/* 404 */}
 
         <Route
           path="*"
