@@ -111,3 +111,31 @@ export const mediaIdParamsSchema = z
     mediaId: objectIdSchema,
   })
   .strict();
+
+  /**
+ * POST /api/media/:mediaId/purchase
+ *
+ * Reserves a media purchase and initiates M-Pesa STK Push.
+ *
+ * The client never supplies the price, buyer ID,
+ * creator ID, payment amount, or payment status.
+ */
+export const createMediaPurchaseSchema = z
+  .object({
+    phoneNumber: z
+      .string()
+      .trim()
+      .min(8)
+      .max(20),
+
+    clientRequestId: z
+      .string()
+      .trim()
+      .min(8)
+      .max(100)
+      .regex(
+        /^[A-Za-z0-9_-]+$/,
+        "Invalid purchase request identifier."
+      ),
+  })
+  .strict();

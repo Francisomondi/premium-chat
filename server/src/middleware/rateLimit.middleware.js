@@ -1,3 +1,4 @@
+
 import { rateLimit } from "express-rate-limit";
 
 import { env } from "../config/env.js";
@@ -20,14 +21,58 @@ const rateLimitHandler = (req, res) => {
 
 /**
  * ============================================================
+ * M-PESA CALLBACK PATH
+ * ============================================================
+ */
+
+const getMpesaCallbackPath = () =>
+  `${env.API_PREFIX}/payments/mpesa/callback`
+    .replace(/\/+$/, "");
+
+/**
+ * ============================================================
  * GLOBAL API LIMITER
  * ============================================================
+ *
+ * The M-Pesa callback has a dedicated limiter.
+ *
+ * It must not share the ordinary API request quota.
  */
 
 export const globalApiLimiter = rateLimit({
   windowMs: env.GLOBAL_RATE_LIMIT_WINDOW_MS,
 
   limit: env.GLOBAL_RATE_LIMIT_MAX,
+
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+
+  skip(req) {
+    const requestPath = req.originalUrl
+      .split("?")[0]
+      .replace(/\/+$/, "");
+
+    return requestPath === getMpesaCallbackPath();
+  },
+
+  handler: rateLimitHandler,
+});
+
+/**
+ * ============================================================
+ * M-PESA CALLBACK LIMITER
+ * ============================================================
+ *
+ * Dedicated protection for public provider callbacks.
+ *
+ * Higher quota accommodates legitimate callback bursts
+ * and provider retries.
+ */
+
+export const mpesaCallbackLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+
+  limit: 1000,
 
   standardHeaders: "draft-8",
   legacyHeaders: false,
@@ -39,9 +84,6 @@ export const globalApiLimiter = rateLimit({
  * ============================================================
  * AUTHENTICATION LIMITER
  * ============================================================
- *
- * Apply this to registration/login/reset endpoints
- * when they are implemented in Module 2.
  */
 
 export const authLimiter = rateLimit({

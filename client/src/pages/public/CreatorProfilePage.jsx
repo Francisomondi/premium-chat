@@ -33,6 +33,10 @@ import {
 } from "../../api/creator.api.js";
 
 import {
+  getCreatorGalleryPreview,
+} from "../../api/services/creatorGalleryPreviewService.js";
+
+import {
   getPublicCreatorGallery,
 } from "../../api/services/creatorGalleryService.js";
 
@@ -286,6 +290,129 @@ function ProfileInfoCard({
     </div>
   );
 }
+
+/**
+ * ============================================================
+ * SECURE PUBLIC CREATOR GALLERY IMAGE
+ * ============================================================
+ *
+ * Loads the clear original image through a backend-authorized
+ * short-lived signed URL.
+ *
+ * Only approved public gallery media can be delivered.
+ */
+
+function CreatorGalleryImage({
+  creatorId,
+  mediaId,
+}) {
+  const [imageUrl, setImageUrl] = useState(null);
+
+  const [isLoading, setIsLoading] = useState(true);
+
+  const [hasError, setHasError] = useState(false);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    const loadImage = async () => {
+      setIsLoading(true);
+      setHasError(false);
+      setImageUrl(null);
+
+      try {
+        const response =
+          await getCreatorGalleryPreview(
+            creatorId,
+            mediaId,
+            {
+              signal: controller.signal,
+            }
+          );
+
+        if (controller.signal.aborted) {
+          return;
+        }
+
+        if (
+          typeof response?.previewUrl !== "string" ||
+          !response.previewUrl.trim()
+        ) {
+          throw new Error(
+            "Public gallery image URL is unavailable."
+          );
+        }
+
+        setImageUrl(response.previewUrl);
+      } catch (error) {
+        if (
+          isCanceledRequest(
+            error,
+            controller.signal
+          )
+        ) {
+          return;
+        }
+
+        setHasError(true);
+      } finally {
+        if (!controller.signal.aborted) {
+          setIsLoading(false);
+        }
+      }
+    };
+
+    if (creatorId && mediaId) {
+      loadImage();
+    } else {
+      setHasError(true);
+      setIsLoading(false);
+    }
+
+    return () => {
+      controller.abort();
+    };
+  }, [creatorId, mediaId]);
+
+  return (
+    <div className="relative flex aspect-square items-center justify-center overflow-hidden bg-gradient-to-br from-[#292018] via-[#19191f] to-[#101014]">
+      {imageUrl && !hasError ? (
+        <img
+          src={imageUrl}
+          alt="Published creator image"
+          loading="lazy"
+          decoding="async"
+          referrerPolicy="no-referrer"
+          onError={() => {
+            setHasError(true);
+          }}
+          className="h-full w-full object-cover"
+        />
+      ) : (
+        <div className="flex h-full w-full items-center justify-center">
+          {isLoading ? (
+            <div
+              role="status"
+              aria-label="Loading public image"
+              className="h-8 w-8 animate-spin rounded-full border-2 border-[#ffcc42]/20 border-t-[#ffcc42]"
+            />
+          ) : (
+            <ImageIcon
+              size={38}
+              strokeWidth={1.3}
+              className="text-[#ffcc42]/80"
+            />
+          )}
+        </div>
+      )}
+
+      <span className="absolute bottom-3 left-3 rounded-full border border-white/10 bg-black/65 px-2.5 py-1 text-[9px] font-semibold uppercase tracking-wider text-white">
+        Public Image
+      </span>
+    </div>
+  );
+}
+
 
 /**
  * ============================================================
@@ -1414,27 +1541,26 @@ export default function CreatorProfilePage() {
                     key={item.id}
                     className="group overflow-hidden rounded-xl border border-white/10 bg-[#15151a] transition hover:border-[#ffcc42]/30"
                   >
-                    <div className="relative flex aspect-square items-center justify-center overflow-hidden bg-gradient-to-br from-[#292018] via-[#19191f] to-[#101014]">
-                      {item.mediaType === "VIDEO" ? (
-                        <Video
-                          size={38}
-                          strokeWidth={1.3}
-                          className="text-[#ffcc42]/80"
-                        />
-                      ) : (
-                        <ImageIcon
-                          size={38}
-                          strokeWidth={1.3}
-                          className="text-[#ffcc42]/80"
-                        />
-                      )}
 
-                      <span className="absolute bottom-3 left-3 rounded-full border border-white/10 bg-black/60 px-2.5 py-1 text-[9px] font-semibold uppercase tracking-wider text-white">
-                        {item.mediaType === "VIDEO"
-                          ? "Video"
-                          : "Image"}
-                      </span>
-                    </div>
+            {item.mediaType === "IMAGE" ? (
+              <CreatorGalleryImage
+                creatorId={creatorId}
+                mediaId={item.id}
+              />
+            ) : (
+              <div className="relative flex aspect-square items-center justify-center overflow-hidden bg-gradient-to-br from-[#292018] via-[#19191f] to-[#101014]">
+                <Video
+                  size={38}
+                  strokeWidth={1.3}
+                  className="text-[#ffcc42]/80"
+                />
+
+                <span className="absolute bottom-3 left-3 rounded-full border border-white/10 bg-black/60 px-2.5 py-1 text-[9px] font-semibold uppercase tracking-wider text-white">
+                  Video
+                </span>
+              </div>
+            )}
+
 
                     <div className="p-3">
                       <p className="text-xs font-semibold text-white">
@@ -1542,3 +1668,4 @@ export default function CreatorProfilePage() {
     </div>
   );
 }
+

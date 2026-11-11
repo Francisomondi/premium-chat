@@ -18,6 +18,8 @@ import {
   getConversation,
   getMessages,
   createMessage,
+  createMediaMessage,
+  getMyConversationMediaController
 } from "../controllers/conversation.controller.js";
 
 import {
@@ -26,6 +28,7 @@ import {
   listConversationsQuerySchema,
   messageHistoryQuerySchema,
   sendMessageSchema,
+  sendMediaMessageSchema
 } from "../validators/conversation.validators.js";
 
 import {
@@ -74,6 +77,13 @@ router.get(
   getMyConversations
 );
 
+router.get(
+  "/:conversationId/my-media",
+  validate({
+    params: conversationParamsSchema,
+  }),
+  getMyConversationMediaController
+);
 /**
  * ============================================================
  * GET ONE CONVERSATION
@@ -133,4 +143,25 @@ router.post(
   createMessage
 );
 
+/**
+ * ============================================================
+ * SEND MEDIA MESSAGE
+ * POST /api/conversations/:conversationId/media
+ * ============================================================
+ */
+
+router.post(
+  "/:conversationId/media",
+
+  requireTrustedOrigin,
+
+  validate({
+    params: conversationParamsSchema,
+    body: sendMediaMessageSchema,
+  }),
+
+  messageRateLimit,
+
+  createMediaMessage
+);
 export default router;

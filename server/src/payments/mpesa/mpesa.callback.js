@@ -1,3 +1,4 @@
+
 /**
  * ============================================================
  * PREMIUMCHAT — M-PESA CALLBACK PARSER
@@ -13,15 +14,18 @@
  *
  * - Validates callback structure.
  * - Extracts transaction identifiers.
- * - Extracts payment metadata.
+ * - Validates callback metadata.
  * - Does not update database records.
  * - Does not activate subscriptions.
  */
 
-const getMetadataValue = (
-  items,
-  name
-) => {
+const isValidRequestId = (value) =>
+  typeof value === "string" &&
+  value.length >= 8 &&
+  value.length <= 255 &&
+  /^[A-Za-z0-9_-]+$/.test(value);
+
+const getMetadataValue = (items, name) => {
   if (!Array.isArray(items)) {
     return null;
   }
@@ -29,6 +33,8 @@ const getMetadataValue = (
   const item = items.find(
     (entry) =>
       entry &&
+      typeof entry === "object" &&
+      !Array.isArray(entry) &&
       entry.Name === name
   );
 
@@ -41,117 +47,118 @@ const getMetadataValue = (
  * ============================================================
  */
 
-export const parseMpesaStkCallback =
-  (payload) => {
-    const callback =
-      payload?.Body?.stkCallback;
+export const parseMpesaStkCallback = (payload) => {
+  const callback = payload?.Body?.stkCallback;
 
+  if (
+    !callback ||
+    typeof callback !== "object" ||
+    Array.isArray(callback)
+  ) {
+    throw new Error(
+      "Invalid M-Pesa callback structure."
+    );
+  }
+
+  const checkoutRequestId =
+    callback.CheckoutRequestID;
+
+  const merchantRequestId =
+    callback.MerchantRequestID;
+
+  if (
+    !isValidRequestId(checkoutRequestId) ||
+    !isValidRequestId(merchantRequestId)
+  ) {
+    throw new Error(
+      "Invalid M-Pesa callback identifiers."
+    );
+  }
+
+  const resultCode = callback.ResultCode;
+
+  if (!Number.isSafeInteger(resultCode)) {
+    throw new Error(
+      "Invalid M-Pesa result code."
+    );
+  }
+
+  const items = callback.CallbackMetadata?.Item;
+
+  const amount = getMetadataValue(
+    items,
+    "Amount"
+  );
+
+  const receipt = getMetadataValue(
+    items,
+    "MpesaReceiptNumber"
+  );
+
+  const phoneNumber = getMetadataValue(
+    items,
+    "PhoneNumber"
+  );
+
+  if (
+    receipt != null &&
+    (
+      typeof receipt !== "string" ||
+      !/^[A-Za-z0-9]{8,30}$/.test(receipt)
+    )
+  ) {
+    throw new Error(
+      "Invalid M-Pesa receipt number."
+    );
+  }
+
+  if (resultCode === 0) {
     if (
-      !callback ||
-      typeof callback !== "object" ||
-      Array.isArray(callback)
+      typeof amount !== "number" ||
+      !Number.isFinite(amount) ||
+      amount <= 0 ||
+      !Number.isSafeInteger(amount * 100) ||
+      receipt == null
     ) {
       throw new Error(
-        "Invalid M-Pesa callback structure."
+        "Successful M-Pesa callback is missing valid payment metadata."
       );
     }
+  }
 
-    const checkoutRequestId =
-      callback.CheckoutRequestID;
+  if (
+    phoneNumber != null &&
+    (
+      typeof phoneNumber !== "number" ||
+      !Number.isSafeInteger(phoneNumber) ||
+      phoneNumber <= 0
+    )
+  ) {
+    throw new Error(
+      "Invalid M-Pesa callback phone number."
+    );
+  }
 
-    const merchantRequestId =
-      callback.MerchantRequestID;
+  return {
+    checkoutRequestId,
 
-    if (
-      typeof checkoutRequestId !== "string" ||
-      !/^[A-Za-z0-9_-]{8,255}$/.test(
-        checkoutRequestId
-      ) ||
-      typeof merchantRequestId !== "string" ||
-      merchantRequestId.length > 255 ||
-      !merchantRequestId
-    ) {
-      throw new Error(
-        "Invalid M-Pesa callback identifiers."
-      );
-    }
+    merchantRequestId,
 
-    const resultCode =
-      callback.ResultCode;
+    resultCode,
 
-    if (
-      !Number.isSafeInteger(resultCode)
-    ) {
-      throw new Error(
-        "Invalid M-Pesa result code."
-      );
-    }
+    providerReportsSuccess:
+      resultCode === 0,
 
-    const items =
-      callback.CallbackMetadata?.Item;
+    amount,
 
-    const amount =
-      getMetadataValue(
-        items,
-        "Amount"
-      );
+    receipt:
+      receipt == null
+        ? null
+        : receipt,
 
-    const receipt =
-      getMetadataValue(
-        items,
-        "MpesaReceiptNumber"
-      );
-
-      if (
-        receipt != null &&
-        (
-          typeof receipt !== "string" ||
-          !/^[A-Za-z0-9]{8,30}$/.test(receipt)
-        )
-      ) {
-        throw new Error(
-          "Invalid M-Pesa receipt number."
-        );
-      }
-
-    const phoneNumber =
-      getMetadataValue(
-        items,
-        "PhoneNumber"
-      );
-
-      if (
-        resultCode === 0 &&
-        (
-          amount == null ||
-          receipt == null
-        )
-      ) {
-        throw new Error(
-          "Successful M-Pesa callback is missing payment metadata."
-        );
-      }
-
-    return {
-      checkoutRequestId,
-
-      merchantRequestId,
-
-      resultCode,
-
-      providerReportsSuccess:
-        resultCode === 0,
-
-      amount,
-
-      receipt:
-        receipt == null
-          ? null
-          : String(receipt),
-
-      phoneNumber:
-        phoneNumber == null
-          ? null
-          : String(phoneNumber),
-    };
+    phoneNumber:
+      phoneNumber == null
+        ? null
+        : String(phoneNumber),
   };
+};

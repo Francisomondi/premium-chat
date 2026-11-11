@@ -39,28 +39,6 @@ import {
   requireMediaStorage,
 } from "../config/mediaStorage.js";
 
-/**
- * ============================================================
- * PREMIUMCHAT — MEDIA UPLOAD SERVICE
- * ============================================================
- *
- * Creates short-lived presigned R2 upload URLs.
- *
- * SECURITY:
- * - Never accepts a client-provided R2 object key.
- * - Never exposes R2 credentials.
- * - Requires an eligible creator.
- * - Requires an active conversation owned by that creator.
- * - Creates media as UPLOADING and PENDING moderation.
- * - Upload completion does not grant viewing access.
- */
-
-/**
- * ============================================================
- * UPLOAD LIMITS
- * ============================================================
- */
-
 const DEFAULT_MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const DEFAULT_MAX_VIDEO_BYTES = 200 * 1024 * 1024;
 
@@ -84,16 +62,6 @@ const MAX_VIDEO_BYTES = getPositiveIntegerEnv(
   DEFAULT_MAX_VIDEO_BYTES
 );
 
-/**
- * ============================================================
- * ALLOWED MIME TYPES
- * ============================================================
- *
- * These are initial allowlists.
- * Actual file bytes must be checked after upload
- * before media can be processed or approved.
- */
-
 const ALLOWED_IMAGE_MIME_TYPES = new Set([
   "image/jpeg",
   "image/png",
@@ -104,12 +72,6 @@ const ALLOWED_VIDEO_MIME_TYPES = new Set([
   "video/mp4",
   "video/webm",
 ]);
-
-/**
- * ============================================================
- * VALIDATE OBJECT ID
- * ============================================================
- */
 
 const validateObjectId = (value, fieldName) => {
   if (
@@ -125,12 +87,6 @@ const validateObjectId = (value, fieldName) => {
 
   return value;
 };
-
-/**
- * ============================================================
- * VERIFY ELIGIBLE CREATOR
- * ============================================================
- */
 
 const verifyEligibleCreator = async (creatorId) => {
   const creator = await User.findById(creatorId)
@@ -199,12 +155,6 @@ const verifyEligibleCreator = async (creatorId) => {
 
   return creator;
 };
-
-/**
- * ============================================================
- * VALIDATE FILE METADATA
- * ============================================================
- */
 
 const validateUploadMetadata = ({
   mediaType,
@@ -278,12 +228,6 @@ const validateUploadMetadata = ({
   }
 };
 
-/**
- * ============================================================
- * VALIDATE ACCESS POLICY AND PRICING
- * ============================================================
- */
-
 const validateMediaPricing = ({
   accessPolicy,
   priceMinor,
@@ -343,13 +287,89 @@ const validateMediaPricing = ({
 };
 
 /**
- * ============================================================
- * CREATE UPLOAD INTENT
- * ============================================================
+ * Conversation access rules are server-enforced.
+ *
+ * CREATOR:
+ * PURCHASE_ONLY + positive KES price.
+ *
+ * USER:
+ * PUBLIC + zero KES price.
+ *
+ * Gallery uploads retain their existing configurable
+ * creator access policies.
  */
+const resolveUploadAccess = ({
+  destination,
+  isCreator,
+  accessPolicy,
+  priceMinor,
+  currency,
+}) => {
+  if (destination !== "CONVERSATION") {
+    return {
+      accessPolicy,
+      priceMinor,
+      currency,
+    };
+  }
+
+  if (currency !== "KES") {
+    throw new AppError(
+      "Conversation images must use KES.",
+      400,
+      "CHAT_MEDIA_CURRENCY_INVALID"
+    );
+  }
+
+  if (isCreator) {
+    if (
+      accessPolicy !== MEDIA_ACCESS_POLICIES.PURCHASE_ONLY
+    ) {
+      throw new AppError(
+        "Creator conversation images must use purchase-only access.",
+        400,
+        "CREATOR_CHAT_MEDIA_MUST_BE_PAID"
+      );
+    }
+
+    if (
+      !Number.isSafeInteger(priceMinor) ||
+      priceMinor <= 0
+    ) {
+      throw new AppError(
+        "Creator conversation images must have a positive KES price.",
+        400,
+        "CREATOR_CHAT_MEDIA_PRICE_REQUIRED"
+      );
+    }
+
+    return {
+      accessPolicy: MEDIA_ACCESS_POLICIES.PURCHASE_ONLY,
+      priceMinor,
+      currency: "KES",
+    };
+  }
+
+  if (
+    accessPolicy !== MEDIA_ACCESS_POLICIES.PUBLIC ||
+    priceMinor !== 0
+  ) {
+    throw new AppError(
+      "User conversation images must be free and publicly accessible.",
+      403,
+      "USER_CHAT_MEDIA_MUST_BE_FREE"
+    );
+  }
+
+  return {
+    accessPolicy: MEDIA_ACCESS_POLICIES.PUBLIC,
+    priceMinor: 0,
+    currency: "KES",
+  };
+};
 
 export const createMediaUploadIntent = async ({
-  creatorId,
+  uploaderId,
   destination = "CONVERSATION",
   conversationId,
   mediaType,
@@ -362,12 +382,38 @@ export const createMediaUploadIntent = async ({
   allDepictedAdultsAndConsented,
   attestationVersion,
 }) => {
-  /**
-   * STEP 1:
-   * Validate creator ID and upload destination.
-   */
+  validateObjectId(uploaderId, "uploader ID");
 
-  validateObjectId(creatorId, "creator ID");
+  const uploader = await User.findById(uploaderId)
+    .select("_id role accountStatus")
+    .lean();
+
+  if (!uploader) {
+    throw new AppError(
+      "Account not found.",
+      404,
+      "ACCOUNT_NOT_FOUND"
+    );
+  }
+
+  if (uploader.accountStatus !== ACCOUNT_STATUSES.ACTIVE) {
+    throw new AppError(
+      "This account is unavailable.",
+      403,
+      "ACCOUNT_UNAVAILABLE"
+    );
+  }
+
+  const isCreator = uploader.role === ACCOUNT_ROLES.CREATOR;
+  const isUser = uploader.role === ACCOUNT_ROLES.USER;
+
+  if (!isCreator && !isUser) {
+    throw new AppError(
+      "This account cannot upload conversation media.",
+      403,
+      "MEDIA_UPLOAD_FORBIDDEN"
+    );
+  }
 
   if (!["CONVERSATION", "GALLERY"].includes(destination)) {
     throw new AppError(
@@ -377,10 +423,13 @@ export const createMediaUploadIntent = async ({
     );
   }
 
-  /**
-   * STEP 2:
-   * Validate destination-specific identifiers.
-   */
+  if (isUser && destination !== "CONVERSATION") {
+    throw new AppError(
+      "Only creators can upload gallery media.",
+      403,
+      "GALLERY_UPLOAD_FORBIDDEN"
+    );
+  }
 
   let validatedConversationId = null;
 
@@ -403,32 +452,20 @@ export const createMediaUploadIntent = async ({
     );
   }
 
-  /**
-   * STEP 3:
-   * Validate file metadata.
-   */
-
   validateUploadMetadata({
     mediaType,
     mimeType,
     fileSize,
   });
 
-  /**
-   * STEP 4:
-   * Validate access policy and pricing.
-   */
-
-  validateMediaPricing({
-    accessPolicy,
-    priceMinor,
-    currency,
-  });
-
-  /**
-   * STEP 5:
-   * Require creator attestations.
-   */
+  // Video processing is not implemented yet.
+  if (mediaType === MEDIA_TYPES.VIDEO) {
+    throw new AppError(
+      "Video uploads are temporarily unavailable.",
+      501,
+      "VIDEO_PROCESSING_UNAVAILABLE"
+    );
+  }
 
   if (
     rightsConfirmed !== true ||
@@ -453,57 +490,72 @@ export const createMediaUploadIntent = async ({
     );
   }
 
-  /**
-   * STEP 6:
-   * Verify creator eligibility from MongoDB.
-   */
+  let creatorId = null;
 
-  await verifyEligibleCreator(creatorId);
-
-  /**
-   * STEP 7:
-   * Verify conversation ownership only for
-   * conversation-linked uploads.
-   */
+  if (isCreator) {
+    await verifyEligibleCreator(uploaderId);
+    creatorId = uploaderId;
+  }
 
   if (destination === "CONVERSATION") {
     const conversation = await verifyConversationMembership({
       conversationId: validatedConversationId,
-      userId: creatorId,
+      userId: uploaderId,
       requireActive: true,
     });
 
     const conversationCreatorId = String(
       conversation.creatorId?._id ??
-        conversation.creatorId
+      conversation.creatorId
     );
 
-    if (conversationCreatorId !== String(creatorId)) {
+    const conversationUserId = String(
+      conversation.userId?._id ??
+      conversation.userId
+    );
+
+    if (isCreator) {
+      if (conversationCreatorId !== String(uploaderId)) {
+        throw new AppError(
+          "Only the creator who owns this conversation may upload its media.",
+          403,
+          "CONVERSATION_CREATOR_MISMATCH"
+        );
+      }
+    } else {
+      if (conversationUserId !== String(uploaderId)) {
+        throw new AppError(
+          "You can only upload media to your own conversation.",
+          403,
+          "CONVERSATION_USER_MISMATCH"
+        );
+      }
+
+      creatorId = conversationCreatorId;
+    }
+
+    if (!mongoose.isValidObjectId(creatorId)) {
       throw new AppError(
-        "Only the creator who owns this conversation may upload its media.",
-        403,
-        "CONVERSATION_CREATOR_MISMATCH"
+        "The conversation creator is invalid.",
+        409,
+        "CONVERSATION_CREATOR_INVALID"
       );
     }
   }
 
-  /**
-   * STEP 8:
-   * Require private R2 storage.
-   */
+  const resolvedAccess = resolveUploadAccess({
+    destination,
+    isCreator,
+    accessPolicy,
+    priceMinor,
+    currency,
+  });
 
-  const {
-    client,
-    bucket,
-  } = requireMediaStorage();
+  validateMediaPricing(resolvedAccess);
 
-  /**
-   * STEP 9:
-   * Generate a server-controlled object key.
-   */
+  const { client, bucket } = requireMediaStorage();
 
   const mediaId = new mongoose.Types.ObjectId();
-
   const randomToken = crypto.randomBytes(16).toString("hex");
 
   const extension =
@@ -512,17 +564,7 @@ export const createMediaUploadIntent = async ({
       : mimeType.split("/")[1];
 
   const storageKey =
-    `private/creators/${creatorId}/media/${mediaId}/${randomToken}.${extension}`;
-
-  /**
-   * STEP 10:
-   * Create a private media record.
-   *
-   * Gallery media has conversationId: null.
-   * Conversation media retains its validated ID.
-   *
-   * Neither destination is automatically approved.
-   */
+    `private/uploads/${uploaderId}/media/${mediaId}/${randomToken}.${extension}`;
 
   const uploadExpiresAt = new Date(
     Date.now() + MAX_PRESIGNED_URL_SECONDS * 1000
@@ -531,54 +573,45 @@ export const createMediaUploadIntent = async ({
   const media = await Media.create({
     _id: mediaId,
 
+    uploaderId,
     creatorId,
 
     conversationId: validatedConversationId,
 
     mediaType,
-
     mimeType,
-
     fileSize,
 
-    accessPolicy,
-
-    priceMinor,
-
-    currency,
+    accessPolicy: resolvedAccess.accessPolicy,
+    priceMinor: resolvedAccess.priceMinor,
+    currency: resolvedAccess.currency,
 
     storageKey,
 
     status: MEDIA_STATUSES.UPLOADING,
-
     moderationStatus: MEDIA_MODERATION_STATUSES.PENDING,
 
     rightsConfirmed: true,
-
     allDepictedAdultsAndConsented: true,
 
     attestationVersion: attestationVersion.trim(),
-
     attestedAt: new Date(),
 
     uploadExpiresAt,
   });
 
-  /**
-   * STEP 11:
-   * Generate a short-lived signed PUT URL.
-   */
+  const mediaIdHeader = String(media._id);
+  const creatorIdHeader = String(creatorId);
+  const uploaderIdHeader = String(uploaderId);
 
   const command = new PutObjectCommand({
     Bucket: bucket,
-
     Key: storageKey,
-
     ContentType: mimeType,
-
     Metadata: {
-      mediaid: String(media._id),
-      creatorid: String(creatorId),
+      mediaid: mediaIdHeader,
+      creatorid: creatorIdHeader,
+      uploaderid: uploaderIdHeader,
     },
   });
 
@@ -587,15 +620,21 @@ export const createMediaUploadIntent = async ({
     command,
     {
       expiresIn: MAX_PRESIGNED_URL_SECONDS,
+
+      unhoistableHeaders: new Set([
+        "x-amz-meta-mediaid",
+        "x-amz-meta-creatorid",
+        "x-amz-meta-uploaderid",
+      ]),
+
+      signableHeaders: new Set([
+        "content-type",
+        "x-amz-meta-mediaid",
+        "x-amz-meta-creatorid",
+        "x-amz-meta-uploaderid",
+      ]),
     }
   );
-
-  /**
-   * STEP 12:
-   * Return only safe upload information.
-   *
-   * Never return storageKey or credentials.
-   */
 
   return {
     media: {
@@ -617,6 +656,9 @@ export const createMediaUploadIntent = async ({
       expiresInSeconds: MAX_PRESIGNED_URL_SECONDS,
       requiredHeaders: {
         "Content-Type": mimeType,
+        "x-amz-meta-mediaid": String(media._id),
+        "x-amz-meta-creatorid": String(creatorId),
+        "x-amz-meta-uploaderid": String(uploaderId),
       },
     },
   };

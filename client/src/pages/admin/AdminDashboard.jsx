@@ -15,6 +15,7 @@ import { useAuthStore } from "../../store/useAuthStore.js";
 import AdminCreatorProfiles from "../../components/admin/AdminCreatorProfiles.jsx";
 
 import CreatorApplicationHistory from "../../components/admin/CreatorApplicationHistory.jsx";
+import AdminMediaModeration from "../../components/admin/AdminMediaModeration.jsx";
 
 /**
  * ============================================================
@@ -241,18 +242,15 @@ export default function AdminDashboard() {
         {/* ============================================= */}
 
         {isActiveAdmin && (
-          <div
-            id="creator-application-reviews"
-            className="mt-10 space-y-10"
-          >
-            {/* Pending applications */}
+          <div id="creator-application-reviews" className="mt-10 space-y-10">
             <PendingCreatorApplications />
 
-            {/* Application history */}
             <CreatorApplicationHistory />
 
-            {/* Approved creator profiles */}
             <AdminCreatorProfiles />
+
+            {/* Media moderation */}
+            <AdminMediaModeration />
           </div>
         )}
 

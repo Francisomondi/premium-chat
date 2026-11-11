@@ -1,12 +1,19 @@
+import { randomUUID } from "node:crypto";
 import mongoose from "mongoose";
+
 
 import MpesaCallbackEvent, {
   MPESA_CALLBACK_EVENT_STATUSES,
+  MPESA_CALLBACK_SETTLEMENT_STATUSES,
 } from "../models/MpesaCallbackEvent.model.js";
 
 import {
   reconcileMpesaStkCallback,
 } from "../services/mpesaStkReconciliation.service.js";
+
+import {
+  recordMediaPurchaseStkQuerySettlement,
+} from "../services/mediaPurchaseSettlement.service.js";
 
 /**
  * ============================================================
@@ -60,6 +67,16 @@ const MAX_BATCH_SIZE = 50;
 
 const DEFAULT_MAX_ATTEMPTS = 12;
 
+const DEFAULT_SETTLEMENT_MAX_ATTEMPTS = 12;
+
+const DEFAULT_SETTLEMENT_LEASE_MS = 120_000;
+
+const DEFAULT_SETTLEMENT_RETRY_BASE_MS = 30_000;
+
+const MAX_SETTLEMENT_RETRY_MS = 30 * 60 * 1000;
+
+const MAX_SETTLEMENT_LEASE_MS = 600_000;
+
 const MIN_INTERVAL_MS = 5_000;
 
 const MAX_INTERVAL_MS = 300_000;
@@ -111,7 +128,85 @@ const getWorkerConfig = () => ({
     1,
     100
   ),
+
+    settlementMaxAttempts: parseInteger(
+    process.env.MPESA_STK_SETTLEMENT_MAX_ATTEMPTS,
+    DEFAULT_SETTLEMENT_MAX_ATTEMPTS,
+    1,
+    100
+  ),
+
+  settlementLeaseMs: parseInteger(
+    process.env.MPESA_STK_SETTLEMENT_LEASE_MS,
+    DEFAULT_SETTLEMENT_LEASE_MS,
+    30_000,
+    MAX_SETTLEMENT_LEASE_MS
+  ),
+
+  settlementRetryBaseMs: parseInteger(
+  process.env.MPESA_STK_SETTLEMENT_RETRY_BASE_MS,
+  DEFAULT_SETTLEMENT_RETRY_BASE_MS,
+  5_000,
+  MAX_SETTLEMENT_RETRY_MS
+),  
 });
+
+/**
+ * ============================================================
+ * SETTLEMENT RETRY BACKOFF
+ * ============================================================
+ */
+
+const getSettlementRetryDelay = ({
+  attemptCount,
+  retryBaseMs,
+}) => {
+  const exponent = Math.min(
+    Math.max(attemptCount - 1, 0),
+    10
+  );
+
+  return Math.min(
+    retryBaseMs * (2 ** exponent),
+    MAX_SETTLEMENT_RETRY_MS
+  );
+};
+/**
+ * ============================================================
+ * SETTLEMENT ERROR CLASSIFICATION
+ * ============================================================
+ */
+
+const isPermanentSettlementError = (error) => {
+  if (
+    Number.isInteger(error?.statusCode)
+  ) {
+    return (
+      error.statusCode >= 400 &&
+      error.statusCode < 500
+    );
+  }
+
+  return false;
+};
+
+const getSettlementErrorCode = (error) => {
+  if (
+    typeof error?.code === "string" &&
+    error.code.trim()
+  ) {
+    return error.code;
+  }
+
+  if (
+    typeof error?.message === "string" &&
+    error.message.trim()
+  ) {
+    return error.message.slice(0, 120);
+  }
+
+  return "MEDIA_SETTLEMENT_PROCESSING_ERROR";
+};
 
 /**
  * ============================================================
@@ -208,6 +303,78 @@ const findDueEvents = async ({
 
 /**
  * ============================================================
+ * FIND DUE MEDIA SETTLEMENT EVENTS
+ * ============================================================
+ *
+ * Read-only discovery.
+ *
+ * Settlement ownership is acquired atomically
+ * in the settlement processing step.
+ */
+
+const findDueSettlementEvents = async ({
+  batchSize,
+  maxAttempts,
+}) => {
+  const now = new Date();
+
+  return MpesaCallbackEvent.find({
+    status: MPESA_CALLBACK_EVENT_STATUSES.RECONCILED,
+
+    hasConflict: false,
+
+    manualReviewRequiredAt: null,
+
+    settlementAttemptCount: {
+      $lt: maxAttempts,
+    },
+
+    $or: [
+      {
+        settlementStatus: {
+          $in: [
+            MPESA_CALLBACK_SETTLEMENT_STATUSES.PENDING,
+            MPESA_CALLBACK_SETTLEMENT_STATUSES.RETRY_SCHEDULED,
+          ],
+        },
+
+        $and: [
+          {
+            $or: [
+              { nextSettlementAttemptAt: null },
+              { nextSettlementAttemptAt: { $lte: now } },
+            ],
+          },
+          {
+            $or: [
+              { settlementLeaseExpiresAt: null },
+              { settlementLeaseExpiresAt: { $lte: now } },
+            ],
+          },
+        ],
+      },
+
+      {
+        settlementStatus:
+          MPESA_CALLBACK_SETTLEMENT_STATUSES.PROCESSING,
+
+        settlementLeaseExpiresAt: {
+          $lte: now,
+        },
+      },
+    ],
+  })
+    .select("_id")
+    .sort({
+      nextSettlementAttemptAt: 1,
+      receivedAt: 1,
+    })
+    .limit(batchSize)
+    .lean();
+};
+
+/**
+ * ============================================================
  * ESCALATE EXHAUSTED ATTEMPTS
  * ============================================================
  *
@@ -279,6 +446,397 @@ const escalateExhaustedEvents = async ({
     );
 
   return result.modifiedCount || 0;
+};
+/**
+ * ============================================================
+ * ESCALATE EXHAUSTED SETTLEMENT ATTEMPTS
+ * ============================================================
+ */
+
+const escalateExhaustedSettlementEvents = async ({
+  maxAttempts,
+}) => {
+  const now = new Date();
+
+  const result =
+    await MpesaCallbackEvent.updateMany(
+      {
+        status:
+          MPESA_CALLBACK_EVENT_STATUSES.RECONCILED,
+
+        settlementAttemptCount: {
+          $gte: maxAttempts,
+        },
+
+        settlementStatus: {
+          $in: [
+            MPESA_CALLBACK_SETTLEMENT_STATUSES.PENDING,
+            MPESA_CALLBACK_SETTLEMENT_STATUSES.RETRY_SCHEDULED,
+            MPESA_CALLBACK_SETTLEMENT_STATUSES.PROCESSING,
+          ],
+        },
+
+        manualReviewRequiredAt: null,
+
+        $or: [
+          {
+            settlementStatus: {
+              $in: [
+                MPESA_CALLBACK_SETTLEMENT_STATUSES.PENDING,
+                MPESA_CALLBACK_SETTLEMENT_STATUSES.RETRY_SCHEDULED,
+              ],
+            },
+
+            $or: [
+              { settlementLeaseExpiresAt: null },
+              { settlementLeaseExpiresAt: { $lte: now } },
+            ],
+          },
+
+          {
+            settlementStatus:
+              MPESA_CALLBACK_SETTLEMENT_STATUSES.PROCESSING,
+
+            settlementLeaseExpiresAt: {
+              $lte: now,
+            },
+          },
+        ],
+      },
+      {
+        $set: {
+          settlementStatus:
+            MPESA_CALLBACK_SETTLEMENT_STATUSES.MANUAL_REVIEW,
+
+          manualReviewRequiredAt: now,
+
+          manualReviewReason:
+            "MAX_MEDIA_SETTLEMENT_ATTEMPTS_EXCEEDED",
+
+          settlementLastErrorCode:
+            "MAX_MEDIA_SETTLEMENT_ATTEMPTS_EXCEEDED",
+
+          nextSettlementAttemptAt: null,
+
+          settlementLeaseOwner: null,
+
+          settlementLeaseExpiresAt: null,
+        },
+      }
+    );
+
+  return result.modifiedCount || 0;
+};
+
+/**
+ * ============================================================
+ * CLAIM ONE MEDIA SETTLEMENT EVENT
+ * ============================================================
+ */
+
+const claimSettlementEvent = async ({
+  callbackEventId,
+  leaseOwner,
+  leaseMs,
+  maxAttempts,
+}) => {
+  const now = new Date();
+
+  const leaseExpiresAt =
+    new Date(now.getTime() + leaseMs);
+
+  return MpesaCallbackEvent.findOneAndUpdate(
+    {
+      _id: callbackEventId,
+
+      status:
+        MPESA_CALLBACK_EVENT_STATUSES.RECONCILED,
+
+      hasConflict: false,
+
+      manualReviewRequiredAt: null,
+
+      settlementAttemptCount: {
+        $lt: maxAttempts,
+      },
+
+      $or: [
+        {
+          settlementStatus: {
+            $in: [
+              MPESA_CALLBACK_SETTLEMENT_STATUSES.PENDING,
+              MPESA_CALLBACK_SETTLEMENT_STATUSES.RETRY_SCHEDULED,
+            ],
+          },
+
+          $and: [
+            {
+              $or: [
+                { nextSettlementAttemptAt: null },
+                { nextSettlementAttemptAt: { $lte: now } },
+              ],
+            },
+            {
+              $or: [
+                { settlementLeaseExpiresAt: null },
+                { settlementLeaseExpiresAt: { $lte: now } },
+              ],
+            },
+          ],
+        },
+
+        {
+          settlementStatus:
+            MPESA_CALLBACK_SETTLEMENT_STATUSES.PROCESSING,
+
+          settlementLeaseExpiresAt: {
+            $lte: now,
+          },
+        },
+      ],
+    },
+    {
+      $set: {
+        settlementStatus:
+          MPESA_CALLBACK_SETTLEMENT_STATUSES.PROCESSING,
+
+        settlementLeaseOwner: leaseOwner,
+
+        settlementLeaseExpiresAt: leaseExpiresAt,
+
+        nextSettlementAttemptAt: null,
+      },
+
+      $inc: {
+        settlementAttemptCount: 1,
+      },
+    },
+    {
+      new: true,
+      runValidators: true,
+    }
+  );
+};
+
+/**
+ * ============================================================
+ * HANDLE MEDIA SETTLEMENT FAILURE
+ * ============================================================
+ */
+
+const handleSettlementFailure = async ({
+  callbackEventId,
+  leaseOwner,
+  attemptCount,
+  maxAttempts,
+  retryBaseMs,
+  error,
+}) => {
+  const permanent =
+    isPermanentSettlementError(error);
+
+  const exhausted =
+    attemptCount >= maxAttempts;
+
+  const requiresManualReview =
+    permanent || exhausted;
+
+  const now = new Date();
+
+  const errorCode =
+    getSettlementErrorCode(error);
+
+  const updateFields = {
+    settlementLeaseOwner: null,
+    settlementLeaseExpiresAt: null,
+    settlementLastErrorCode: errorCode,
+  };
+
+  if (requiresManualReview) {
+    updateFields.settlementStatus =
+      MPESA_CALLBACK_SETTLEMENT_STATUSES.MANUAL_REVIEW;
+
+    updateFields.manualReviewRequiredAt = now;
+
+    updateFields.manualReviewReason =
+      exhausted
+        ? "MAX_MEDIA_SETTLEMENT_ATTEMPTS_EXCEEDED"
+        : errorCode;
+
+    updateFields.nextSettlementAttemptAt = null;
+  } else {
+    updateFields.settlementStatus =
+      MPESA_CALLBACK_SETTLEMENT_STATUSES.RETRY_SCHEDULED;
+
+    updateFields.nextSettlementAttemptAt =
+      new Date(
+        now.getTime() +
+        getSettlementRetryDelay({
+          attemptCount,
+          retryBaseMs,
+        })
+      );
+  }
+
+  const result = await MpesaCallbackEvent.updateOne(
+    {
+      _id: callbackEventId,
+
+      status:
+        MPESA_CALLBACK_EVENT_STATUSES.RECONCILED,
+
+      settlementStatus:
+        MPESA_CALLBACK_SETTLEMENT_STATUSES.PROCESSING,
+
+      settlementLeaseOwner: leaseOwner,
+    },
+    {
+      $set: updateFields,
+    }
+  );
+
+  return {
+    updated: result.modifiedCount === 1,
+    requiresManualReview,
+  };
+};
+
+/**
+ * ============================================================
+ * PROCESS ONE MEDIA SETTLEMENT
+ * ============================================================
+ */
+
+const processSettlementEvent = async ({
+  event,
+  config,
+}) => {
+  const callbackEventId = event._id;
+
+  const leaseOwner = randomUUID();
+
+  let claimedEvent = null;
+
+  try {
+    claimedEvent = await claimSettlementEvent({
+      callbackEventId,
+      leaseOwner,
+      leaseMs: config.settlementLeaseMs,
+      maxAttempts: config.settlementMaxAttempts,
+    });
+
+    if (!claimedEvent) {
+      return {
+        callbackEventId: callbackEventId.toString(),
+        settled: false,
+        skipped: true,
+        reason: "SETTLEMENT_LEASE_NOT_ACQUIRED",
+      };
+    }
+
+    if (!claimedEvent.paymentId) {
+      throw new Error("SETTLEMENT_PAYMENT_ID_MISSING");
+    }
+
+    await recordMediaPurchaseStkQuerySettlement({
+      paymentId: claimedEvent.paymentId,
+      callbackEventId: claimedEvent._id,
+      settlementLeaseOwner: leaseOwner,
+    });
+
+    const completedAt = new Date();
+
+    const completion =
+      await MpesaCallbackEvent.updateOne(
+        {
+          _id: claimedEvent._id,
+
+          settlementStatus:
+            MPESA_CALLBACK_SETTLEMENT_STATUSES.PROCESSING,
+
+          settlementLeaseOwner: leaseOwner,
+
+          settlementLeaseExpiresAt: {
+            $gt: completedAt,
+          },
+        },
+        {
+          $set: {
+            settlementStatus:
+              MPESA_CALLBACK_SETTLEMENT_STATUSES.COMPLETED,
+
+            settledAt: completedAt,
+
+            nextSettlementAttemptAt: null,
+
+            settlementLeaseOwner: null,
+
+            settlementLeaseExpiresAt: null,
+
+            settlementLastErrorCode: null,
+          },
+        }
+      );
+
+    if (completion.modifiedCount !== 1) {
+      throw new Error("SETTLEMENT_COMPLETION_LEASE_LOST");
+    }
+
+    return {
+      callbackEventId: callbackEventId.toString(),
+      settled: true,
+      skipped: false,
+      reason: "MEDIA_PURCHASE_SETTLED",
+    };
+  } catch (error) {
+    console.error(
+      "[M-Pesa Worker] Media settlement failed:",
+      {
+        callbackEventId: callbackEventId.toString(),
+        errorCode: getSettlementErrorCode(error),
+      }
+    );
+
+    if (claimedEvent) {
+      try {
+        const failure = await handleSettlementFailure({
+          callbackEventId: claimedEvent._id,
+          leaseOwner,
+          attemptCount: claimedEvent.settlementAttemptCount,
+          maxAttempts: config.settlementMaxAttempts,
+          retryBaseMs: config.settlementRetryBaseMs,
+          error,
+        });
+
+        return {
+          callbackEventId: callbackEventId.toString(),
+          settled: false,
+          skipped: false,
+          requiresManualReview:
+            failure.requiresManualReview,
+          retryScheduled:
+            !failure.requiresManualReview && failure.updated,
+          reason: getSettlementErrorCode(error),
+        };
+      } catch (failureError) {
+        console.error(
+          "[M-Pesa Worker] Settlement failure handling failed:",
+          {
+            callbackEventId: callbackEventId.toString(),
+            errorCode: getSettlementErrorCode(failureError),
+          }
+        );
+      }
+    }
+
+    return {
+      callbackEventId: callbackEventId.toString(),
+      settled: false,
+      skipped: false,
+      requiresManualReview: false,
+      reason: "SETTLEMENT_PROCESSING_ERROR",
+    };
+  }
 };
 
 /**
@@ -395,6 +953,39 @@ export const runMpesaStkReconciliationCycle =
         results.push(result);
       }
 
+            /**
+       * ======================================================
+       * PROCESS MEDIA PURCHASE SETTLEMENT QUEUE
+       * ======================================================
+       */
+
+      const settlementEscalated =
+        await escalateExhaustedSettlementEvents({
+          maxAttempts: config.settlementMaxAttempts,
+        });
+
+      const settlementEvents =
+        await findDueSettlementEvents({
+          batchSize: config.batchSize,
+          maxAttempts: config.settlementMaxAttempts,
+        });
+
+      const settlementResults = [];
+
+      for (const event of settlementEvents) {
+        if (workerStopping) {
+          break;
+        }
+
+        const result =
+          await processSettlementEvent({
+            event,
+            config,
+          });
+
+        settlementResults.push(result);
+      }
+
       const reconciled =
         results.filter(
           (item) => item.reconciled
@@ -405,7 +996,22 @@ export const runMpesaStkReconciliationCycle =
           (item) => item.requiresManualReview
         ).length;
 
-      return {
+              const settled =
+        settlementResults.filter(
+          (item) => item.settled
+        ).length;
+
+      const settlementManualReview =
+        settlementResults.filter(
+          (item) => item.requiresManualReview
+        ).length;
+
+      const settlementRetries =
+        settlementResults.filter(
+          (item) => item.retryScheduled
+        ).length;
+
+          return {
         skipped: false,
 
         processed: results.length,
@@ -416,8 +1022,21 @@ export const runMpesaStkReconciliationCycle =
 
         escalated,
 
+        settlementsProcessed: settlementResults.length,
+
+        settled,
+
+        settlementManualReview,
+
+        settlementRetries,
+
+        settlementEscalated,
+
         results,
+
+        settlementResults,
       };
+
     } catch (error) {
       console.error(
         "[M-Pesa Worker] Cycle failed:",
@@ -473,7 +1092,11 @@ const scheduleNextCycle = () => {
         result &&
         !result.skipped &&
         !result.failed &&
-        result.processed > 0
+        (
+          result.processed > 0 ||
+          result.settlementsProcessed > 0 ||
+          result.settlementEscalated > 0
+        )
       ) {
         console.info(
           "[M-Pesa Worker] Cycle completed:",
@@ -482,6 +1105,20 @@ const scheduleNextCycle = () => {
             reconciled: result.reconciled,
             manualReview: result.manualReview,
             escalated: result.escalated,
+
+            settlementsProcessed:
+              result.settlementsProcessed,
+
+            settled: result.settled,
+
+            settlementManualReview:
+              result.settlementManualReview,
+
+            settlementRetries:
+              result.settlementRetries,
+
+            settlementEscalated:
+              result.settlementEscalated,
           }
         );
       }

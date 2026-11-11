@@ -242,16 +242,14 @@ export const authorizeMediaAccess = async ({
    * media that has not passed processing and moderation.
    */
 
-  if (
-    media.status !== MEDIA_STATUSES.READY ||
-    media.moderationStatus !==
-      MEDIA_MODERATION_STATUSES.APPROVED ||
-    media.deletedAt != null
-  ) {
-    return deny(
-      MEDIA_ACCESS_REASONS.MEDIA_NOT_FOUND
-    );
-  }
+if (
+  media.status !== MEDIA_STATUSES.READY ||
+  media.moderationStatus !==
+    MEDIA_MODERATION_STATUSES.APPROVED ||
+  media.deletedAt != null
+) {
+  return deny(MEDIA_ACCESS_REASONS.MEDIA_NOT_FOUND);
+}
 
   /**
    * STEP 3 — VALIDATE VIEWER ID

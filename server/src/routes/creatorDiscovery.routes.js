@@ -11,6 +11,19 @@ import {
   getPublicCreatorGalleryController,
 } from "../controllers/creatorGallery.controller.js";
 
+import {
+  requireAuth,
+} from "../middleware/auth.middleware.js";
+
+import {
+  getMyCreatorMediaController,
+} from "../controllers/creatorMediaManagement.controller.js";
+
+import {
+  getPublicCreatorGalleryPreviewController,
+} from "../controllers/creatorGalleryPreview.controller.js";
+
+
 /**
  * ============================================================
  * PREMIUMCHAT — PUBLIC CREATOR DISCOVERY ROUTES
@@ -66,10 +79,25 @@ router.get(
 );
 
 router.get(
+  "/me/gallery",
+  requireAuth,
+  discoveryLimiter,
+  getMyCreatorMediaController
+);
+
+router.get(
   "/:creatorId/gallery",
   discoveryLimiter,
   getPublicCreatorGalleryController
 );
+
+
+router.get(
+  "/:creatorId/gallery/:mediaId/preview",
+  discoveryLimiter,
+  getPublicCreatorGalleryPreviewController
+);
+
 
 /**
  * ============================================================

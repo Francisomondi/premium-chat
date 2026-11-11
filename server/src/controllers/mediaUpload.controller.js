@@ -20,6 +20,12 @@ import {
 } from "../config/mediaStorage.js";
 
 
+import MediaProcessingJob, {
+  MEDIA_JOB_STATUSES,
+} from "../models/MediaProcessingJob.model.js";
+
+
+
 /**
  * ============================================================
  * CREATE MEDIA UPLOAD
@@ -65,7 +71,7 @@ export const createMediaUploadController = async (
   } = req.body;
 
   const result = await createMediaUploadIntent({
-    creatorId: String(userId),
+    uploaderId: String(userId),
     destination,
     conversationId,
     mediaType,
@@ -136,13 +142,21 @@ export const completeMediaUploadController = async (
     }
 
     // Load the upload record, including its private storage key.
-    const media = await Media.findOne({
-      _id: mediaId,
-      creatorId: userId,
-      status: MEDIA_STATUSES.UPLOADING,
-      moderationStatus: MEDIA_MODERATION_STATUSES.PENDING,
-      deletedAt: null,
-    }).select("+storageKey");
+const media = await Media.findOne({
+  _id: mediaId,
+  $or: [
+    { uploaderId: userId },
+    { uploaderId: null, creatorId: userId },
+  ],
+  status: {
+    $in: [
+      MEDIA_STATUSES.UPLOADING,
+      MEDIA_STATUSES.PROCESSING,
+    ],
+  },
+  moderationStatus: MEDIA_MODERATION_STATUSES.PENDING,
+  deletedAt: null,
+}).select("+storageKey");
 
     if (!media) {
       throw new AppError(
@@ -228,50 +242,110 @@ export const completeMediaUploadController = async (
     }
 
     // Verify the metadata added when the presigned URL was created.
-    const metadata = object.Metadata || {};
+const metadata = object.Metadata || {};
 
-    if (
-      metadata.mediaid !== String(media._id).toLowerCase() ||
-      metadata.creatorid !== String(userId).toLowerCase()
-    ) {
-      throw new AppError(
-        "The uploaded file metadata could not be verified.",
-        422,
-        "MEDIA_METADATA_MISMATCH"
-      );
-    }
+const expectedCreatorId = String(media.creatorId).toLowerCase();
+const expectedUploaderId = String(
+  media.uploaderId || media.creatorId
+).toLowerCase();
 
-    // Atomically transition the upload to PROCESSING.
-    // This prevents multiple completion requests from processing
-    // the same UPLOADING record concurrently.
-    const updatedMedia = await Media.findOneAndUpdate(
-      {
-        _id: media._id,
-        creatorId: userId,
-        status: MEDIA_STATUSES.UPLOADING,
-        moderationStatus: MEDIA_MODERATION_STATUSES.PENDING,
-        deletedAt: null,
-        uploadExpiresAt: {
-          $gt: new Date(),
+const creatorMetadataMatches =
+  metadata.creatorid === expectedCreatorId;
+
+const uploaderMetadataMatches = media.uploaderId
+  ? metadata.uploaderid === expectedUploaderId
+  : metadata.creatorid === expectedUploaderId;
+
+if (
+  metadata.mediaid !== String(media._id).toLowerCase() ||
+  !creatorMetadataMatches ||
+  !uploaderMetadataMatches
+) {
+  throw new AppError(
+    "The uploaded file metadata could not be verified.",
+    422,
+    "MEDIA_METADATA_MISMATCH"
+  );
+}
+
+
+    /**
+     * ========================================================
+     * TRANSITION MEDIA TO PROCESSING
+     * ========================================================
+     *
+     * Only transition UPLOADING records.
+     * Repeated completion requests may reuse PROCESSING records.
+     */
+
+    let updatedMedia;
+
+    if (media.status === MEDIA_STATUSES.UPLOADING) {
+      updatedMedia = await Media.findOneAndUpdate(
+        {
+          _id: media._id,
+          ...(media.uploaderId
+          ? { uploaderId: userId }
+          : {
+              uploaderId: null,
+              creatorId: userId,
+            }),
+          status: MEDIA_STATUSES.UPLOADING,
+          moderationStatus: MEDIA_MODERATION_STATUSES.PENDING,
+          deletedAt: null,
+          uploadExpiresAt: {
+            $gt: new Date(),
+          },
         },
-      },
-      {
-        $set: {
-          status: MEDIA_STATUSES.PROCESSING,
+        {
+          $set: {
+            status: MEDIA_STATUSES.PROCESSING,
+          },
         },
-      },
-      {
-        new: true,
+        {
+          new: true,
+        }
+      ).select("_id status moderationStatus");
+
+      if (!updatedMedia) {
+        throw new AppError(
+          "The upload could not be completed because its status has changed or its session has expired.",
+          409,
+          "MEDIA_UPLOAD_STATE_CHANGED"
+        );
       }
-    ).select("_id status moderationStatus");
-
-    if (!updatedMedia) {
-      throw new AppError(
-        "The upload could not be completed because its status has changed or its session has expired.",
-        409,
-        "MEDIA_UPLOAD_STATE_CHANGED"
-      );
+    } else {
+      updatedMedia = media;
     }
+
+    /**
+     * ========================================================
+     * CREATE OR REUSE PROCESSING JOB
+     * ========================================================
+     *
+     * The unique mediaId index prevents duplicate jobs.
+     * $setOnInsert preserves existing job state on retries.
+     */
+
+    await MediaProcessingJob.findOneAndUpdate(
+      {
+        mediaId: updatedMedia._id,
+      },
+      {
+        $setOnInsert: {
+          mediaId: updatedMedia._id,
+          status: MEDIA_JOB_STATUSES.QUEUED,
+          attempts: 0,
+          maxAttempts: 3,
+          availableAt: new Date(),
+        },
+      },
+      {
+        upsert: true,
+        new: true,
+        setDefaultsOnInsert: true,
+      }
+    );
 
     return res.status(202).json({
       success: true,

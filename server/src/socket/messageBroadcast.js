@@ -1,3 +1,4 @@
+
 import {
   getSocketServer,
 } from "./socket.server.js";
@@ -12,68 +13,58 @@ import {
 
 /**
  * ============================================================
- * FORMAT MESSAGE FOR SOCKET DELIVERY
+ * MESSAGE SOCKET SERIALIZATION
  * ============================================================
  *
- * SECURITY:
- *
- * - Explicitly allowlist public message fields.
- * - Never expose private media storage URLs.
- * - Never expose payment entitlement details.
- * - Never expose internal account information.
- * - Reject unsupported message types until
- *   their serializers are implemented.
- *
- * Currently supports TEXT messages only.
+ * Only explicitly approved fields are broadcast.
+ * Never broadcast storage keys or signed media URLs.
  */
 
-export const formatMessageForSocket = (
-  message
-) => {
-  if (!message) {
-    throw new TypeError(
-      "A saved message is required."
+export const formatMessageForSocket = (message) => {
+  if (!message || typeof message !== "object") {
+    throw new Error(
+      "Invalid message supplied for socket serialization."
     );
   }
 
-  /**
-   * Media delivery requires a dedicated
-   * authorization-aware serializer.
-   */
+  const supportedTypes = [
+    "TEXT",
+    "IMAGE",
+    "VIDEO",
+  ];
 
-  if (message.type !== "TEXT") {
-    throw new TypeError(
-      "Socket serialization for media messages is not available yet."
+  if (!supportedTypes.includes(message.type)) {
+    throw new Error(
+      "Unsupported socket message type."
     );
   }
 
-  return {
-    _id: message._id.toString(),
-
-    conversationId:
-      message.conversationId.toString(),
-
-    senderId:
-      message.senderId.toString(),
-
-    clientMessageId:
-      message.clientMessageId,
-
-    type: "TEXT",
-
-    content: message.content,
-
+  const payload = {
+    _id: message._id?.toString(),
+    conversationId: message.conversationId?.toString(),
+    senderId: message.senderId?.toString(),
+    clientMessageId: message.clientMessageId,
+    type: message.type,
+    content: message.content || "",
     status: message.status,
-
     createdAt: message.createdAt,
-
     updatedAt: message.updatedAt,
   };
+
+  if (message.type !== "TEXT") {
+    payload.mediaId =
+      message.mediaId?.toString() ?? null;
+
+    payload.isLocked =
+      message.isLocked === true;
+  }
+
+  return payload;
 };
 
 /**
  * ============================================================
- * SECURE MESSAGE BROADCAST
+ * BROADCAST NEW MESSAGE
  * ============================================================
  */
 
@@ -82,33 +73,27 @@ export const broadcastNewMessage = async ({
   created,
   excludeSocketId = null,
 }) => {
-  if (!created) {
+  if (!created || !message) {
     return false;
   }
 
   const io = getSocketServer();
 
-  const messagePayload =
-    formatMessageForSocket(message);
+  if (!io) {
+    return false;
+  }
 
-  const conversationId =
-    messagePayload.conversationId;
+  const payload = formatMessageForSocket(message);
 
-  const room = getConversationRoom(
-    conversationId
-  );
+  const conversationId = payload.conversationId;
 
-  /**
-   * Retrieve sockets currently joined
-   * to the conversation room.
-   */
+  if (!conversationId) {
+    return false;
+  }
 
-  const sockets =
-    await io.in(room).fetchSockets();
+  const room = getConversationRoom(conversationId);
 
-  /**
-   * Validate each recipient independently.
-   */
+  const sockets = await io.in(room).fetchSockets();
 
   for (const socket of sockets) {
     if (
@@ -118,28 +103,27 @@ export const broadcastNewMessage = async ({
       continue;
     }
 
-    const authorized =
-      await verifySocketConversationAccess({
-        socket,
-        conversationId,
-        requireActive: true,
-      });
+    try {
+      const authorized =
+        await verifySocketConversationAccess({
+          socket,
+          conversationId,
+          requireActive: true,
+        });
 
-    if (!authorized) {
+      if (!authorized) {
+        continue;
+      }
+
+      socket.emit("message:new", {
+        conversationId,
+        message: payload,
+      });
+    } catch {
+      // Never deliver to a socket whose authorization
+      // could not be verified.
       continue;
     }
-
-    /**
-     * Deliver only to authorized sockets.
-     */
-
-    socket.emit(
-      "message:new",
-      {
-        conversationId,
-        message: messagePayload,
-      }
-    );
   }
 
   return true;

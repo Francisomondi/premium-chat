@@ -50,6 +50,8 @@ import { normalizeChatId } from "./chat.utils.js";
 
 const BOTTOM_THRESHOLD_PX = 120;
 
+const EMPTY_MESSAGES = [];
+
 /**
  * ============================================================
  * DATE HELPERS
@@ -223,10 +225,10 @@ export default function MessageList({
    * ==========================================================
    */
 
-  const messages = useChatStore(
-    (state) =>
-      state.messagesByConversation[conversationId] ?? []
-  );
+const messages = useChatStore(
+  (state) =>
+    state.messagesByConversation[conversationId] ?? EMPTY_MESSAGES
+);
 
   const pagination = useChatStore(
     (state) =>

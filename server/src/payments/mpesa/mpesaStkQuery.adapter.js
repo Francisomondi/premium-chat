@@ -46,12 +46,12 @@ const unavailable = (reason) => ({
 });
 
 const getConfig = () => {
-  const environment =
-    process.env.MPESA_ENVIRONMENT || "sandbox";
+const environment =
+  process.env.MPESA_ENV || "sandbox";
 
   if (!Object.hasOwn(API_HOSTS, environment)) {
     throw new Error(
-      "MPESA_ENVIRONMENT must be sandbox or production."
+      "MPESA_ENV must be sandbox or production."
     );
   }
 

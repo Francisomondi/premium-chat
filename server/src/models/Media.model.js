@@ -48,11 +48,36 @@ const mediaSchema = new mongoose.Schema(
      * ========================================================
      */
 
+    /**
+     * The creator associated with this media.
+     *
+     * For conversation uploads, this is the conversation's
+     * creator, regardless of which participant uploaded it.
+     * It remains the attribution owner for paid media.
+     *
+     * Legacy records use creatorId as their uploader identity.
+     */
+
     creatorId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       required: true,
       immutable: true,
+      index: true,
+    },
+
+    /**
+     * The authenticated account that uploaded the file.
+     *
+     * Optional only for backwards compatibility with
+     * existing records created before uploader tracking.
+     */
+
+    uploaderId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      immutable: true,
+      default: null,
       index: true,
     },
 

@@ -6,8 +6,13 @@ import {
 
 import {
   sendTextMessage,
+  sendMediaMessage,
   getConversationMessages,
 } from "../services/message.service.js";
+
+import {
+  getMyConversationMedia,
+} from "../services/conversationMedia.service.js";
 
 import {
   broadcastNewMessage,
@@ -266,6 +271,96 @@ export const createMessage = async (
         created,
       },
 
+      requestId: req.requestId,
+    });
+  } catch (error) {
+    return next(error);
+  }
+};
+
+/**
+ * ============================================================
+ * SEND MEDIA MESSAGE
+ * POST /api/conversations/:conversationId/media
+ * ============================================================
+ */
+
+export const createMediaMessage = async (
+  req,
+  res,
+  next
+) => {
+  try {
+    const senderId = req.auth.userId;
+
+    const { conversationId } =
+      req.validated.params;
+
+    const {
+      clientMessageId,
+      mediaId,
+      content,
+    } = req.validated.body;
+
+    const result = await sendMediaMessage({
+      conversationId,
+      senderId,
+      clientMessageId,
+      mediaId,
+      content,
+    });
+
+    const { message, created } = result;
+
+    if (created) {
+      try {
+        await broadcastNewMessage({
+          message,
+          created,
+        });
+      } catch (broadcastError) {
+        console.error(
+          "REST media message broadcast failed:",
+          broadcastError.message
+        );
+      }
+    }
+
+    return res.status(created ? 201 : 200).json({
+      success: true,
+      message: created
+        ? "Media message sent successfully."
+        : "Existing media message retrieved.",
+      data: {
+        message,
+        created,
+      },
+      requestId: req.requestId,
+    });
+  } catch (error) {
+    return next(error);
+  }
+};
+
+
+
+export const getMyConversationMediaController = async (
+  req,
+  res,
+  next
+) => {
+  try {
+    const result = await getMyConversationMedia({
+      conversationId: req.validated.params.conversationId,
+      userId: req.auth.userId,
+      page: req.query.page,
+      limit: req.query.limit,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Your approved conversation media was retrieved.",
+      data: result,
       requestId: req.requestId,
     });
   } catch (error) {

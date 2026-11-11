@@ -109,3 +109,29 @@ export const sendMessageSchema = z
       .max(5000),
   })
   .strict();
+
+
+  /**
+ * ============================================================
+ * SEND MEDIA MESSAGE
+ * POST /api/conversations/:conversationId/media
+ * ============================================================
+ */
+
+export const sendMediaMessageSchema = z
+  .object({
+    clientMessageId: z
+      .string()
+      .trim()
+      .min(8)
+      .max(100),
+
+    mediaId: objectIdSchema,
+
+    content: z
+      .string()
+      .trim()
+      .max(5000)
+      .default(""),
+  })
+  .strict();

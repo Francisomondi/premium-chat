@@ -1,3 +1,4 @@
+
 import {
   useEffect,
   useRef,
@@ -8,54 +9,21 @@ import {
   AlertCircle,
   Clock3,
   Loader2,
+  Paperclip,
   Send,
 } from "lucide-react";
 
 import { useChatStore } from "../../store/useChatStore.js";
+import { useAuthStore } from "../../store/useAuthStore.js";
+
+import ChatImageComposer from "./ChatImageComposer.jsx";
 
 import {
   normalizeChatId,
 } from "./chat.utils.js";
 
-/**
- * ============================================================
- * PREMIUMCHAT — MESSAGE COMPOSER
- * ============================================================
- *
- * UI CLEANUP 1.9
- *
- * Features:
- * - Compact black-and-gold interface
- * - Multiline text input
- * - Enter to send
- * - Shift + Enter for newline
- * - 5000-character limit
- * - Automatic textarea resizing
- * - Draft preservation per conversation
- * - Socket.IO / REST sending through Zustand
- * - Duplicate submission prevention
- * - Sending indicator
- * - Error handling
- * - Rate-limit countdown
- * - Blocked/archived conversation restrictions
- *
- * IMPORTANT:
- *
- * This component does not directly emit Socket.IO
- * events or make REST API requests.
- *
- * Message sending remains managed by useChatStore.
- */
-
 const MAX_MESSAGE_LENGTH = 5000;
-
-const MAX_TEXTAREA_HEIGHT = 140;
-
-/**
- * ============================================================
- * FORMAT RETRY COUNTDOWN
- * ============================================================
- */
+const MAX_TEXTAREA_HEIGHT = 100;
 
 function formatRetryCountdown(milliseconds) {
   const seconds = Math.ceil(
@@ -67,17 +35,10 @@ function formatRetryCountdown(milliseconds) {
   }
 
   const minutes = Math.floor(seconds / 60);
-
   const remainingSeconds = seconds % 60;
 
   return `${minutes}m ${remainingSeconds}s`;
 }
-
-/**
- * ============================================================
- * MESSAGE COMPOSER
- * ============================================================
- */
 
 export default function MessageComposer({
   conversationId,
@@ -85,42 +46,25 @@ export default function MessageComposer({
   className = "",
   onMessageSent,
 }) {
-  /**
-   * ==========================================================
-   * REFS
-   * ==========================================================
-   */
-
   const textareaRef = useRef(null);
-
   const sendingRef = useRef(false);
 
-  /**
-   * ==========================================================
-   * LOCAL STATE
-   * ==========================================================
-   */
-
   const [drafts, setDrafts] = useState({});
+  const [now, setNow] = useState(() => Date.now());
 
-  const [now, setNow] = useState(
-    () => Date.now()
+  const [
+    showPaidMediaComposer,
+    setShowPaidMediaComposer,
+  ] = useState(false);
+
+  const userRole = useAuthStore(
+    (state) => state.user?.role
   );
 
-  /**
-   * ==========================================================
-   * NORMALIZE CONVERSATION ID
-   * ==========================================================
-   */
+  const isCreator = userRole === "CREATOR";
 
   const normalizedConversationId =
     normalizeChatId(conversationId);
-
-  /**
-   * ==========================================================
-   * CHAT STORE
-   * ==========================================================
-   */
 
   const sendMessage = useChatStore(
     (state) => state.sendMessage
@@ -138,12 +82,6 @@ export default function MessageComposer({
     (state) => state.rateLimitedUntil
   );
 
-  /**
-   * ==========================================================
-   * DRAFT PRESERVATION
-   * ==========================================================
-   */
-
   const draft = normalizedConversationId
     ? drafts[normalizedConversationId] ?? ""
     : "";
@@ -154,12 +92,6 @@ export default function MessageComposer({
 
   const remainingCharacters =
     MAX_MESSAGE_LENGTH - characterCount;
-
-  /**
-   * ==========================================================
-   * CONVERSATION STATUS
-   * ==========================================================
-   */
 
   const normalizedStatus =
     typeof conversationStatus === "string"
@@ -176,24 +108,12 @@ export default function MessageComposer({
     !normalizedConversationId ||
     normalizedStatus !== "ACTIVE";
 
-  /**
-   * ==========================================================
-   * RATE LIMIT
-   * ==========================================================
-   */
-
   const retryRemainingMs = rateLimitedUntil
     ? Math.max(0, rateLimitedUntil - now)
     : 0;
 
   const isRateLimited =
     retryRemainingMs > 0;
-
-  /**
-   * ==========================================================
-   * CAN SEND
-   * ==========================================================
-   */
 
   const canSend =
     !isConversationUnavailable &&
@@ -204,9 +124,7 @@ export default function MessageComposer({
     characterCount <= MAX_MESSAGE_LENGTH;
 
   /**
-   * ==========================================================
-   * UPDATE RATE-LIMIT COUNTDOWN
-   * ==========================================================
+   * RATE LIMIT COUNTDOWN
    */
 
   useEffect(() => {
@@ -223,23 +141,17 @@ export default function MessageComposer({
       setNow(Date.now());
     }, 1000);
 
-    return () => {
-      window.clearInterval(interval);
-    };
+    return () => window.clearInterval(interval);
   }, [rateLimitedUntil]);
 
   /**
-   * ==========================================================
-   * AUTO-RESIZE TEXTAREA
-   * ==========================================================
+   * TEXTAREA AUTO RESIZE
    */
 
   useEffect(() => {
     const textarea = textareaRef.current;
 
-    if (!textarea) {
-      return;
-    }
+    if (!textarea) return;
 
     textarea.style.height = "auto";
 
@@ -247,27 +159,18 @@ export default function MessageComposer({
       textarea.scrollHeight,
       MAX_TEXTAREA_HEIGHT
     )}px`;
-  }, [
-    draft,
-    normalizedConversationId,
-  ]);
+  }, [draft, normalizedConversationId]);
 
   /**
-   * ==========================================================
-   * HANDLE DRAFT CHANGE
-   * ==========================================================
+   * DRAFT CHANGE
    */
 
   const handleDraftChange = (event) => {
-    if (!normalizedConversationId) {
-      return;
-    }
+    if (!normalizedConversationId) return;
 
     const value = event.target.value;
 
-    if (value.length > MAX_MESSAGE_LENGTH) {
-      return;
-    }
+    if (value.length > MAX_MESSAGE_LENGTH) return;
 
     setDrafts((previous) => ({
       ...previous,
@@ -276,9 +179,7 @@ export default function MessageComposer({
   };
 
   /**
-   * ==========================================================
-   * HANDLE SEND
-   * ==========================================================
+   * SEND TEXT MESSAGE
    */
 
   const handleSend = async () => {
@@ -286,10 +187,6 @@ export default function MessageComposer({
       normalizedConversationId;
 
     const messageContent = draft.trim();
-
-    /**
-     * Prevent duplicate submissions.
-     */
 
     if (
       sendingRef.current ||
@@ -305,35 +202,15 @@ export default function MessageComposer({
     sendingRef.current = true;
 
     try {
-      /**
-       * Send through existing Zustand store.
-       */
-
       const message = await sendMessage({
         conversationId: targetConversationId,
         content: messageContent,
       });
 
-      /**
-       * Preserve draft when sending fails.
-       */
-
-      if (!message) {
-        return;
-      }
-
-      /**
-       * Clear only the successfully sent draft.
-       *
-       * If the user edited the draft while sending,
-       * preserve their newer text.
-       */
+      if (!message) return;
 
       setDrafts((previous) => {
-        if (
-          previous[targetConversationId] !==
-          draft
-        ) {
+        if (previous[targetConversationId] !== draft) {
           return previous;
         }
 
@@ -350,26 +227,16 @@ export default function MessageComposer({
   };
 
   /**
-   * ==========================================================
-   * HANDLE KEYBOARD
-   * ==========================================================
+   * KEYBOARD HANDLING
    */
 
   const handleKeyDown = (event) => {
-    /**
-     * Shift + Enter inserts a newline.
-     */
-
     if (
       event.key !== "Enter" ||
       event.shiftKey
     ) {
       return;
     }
-
-    /**
-     * Preserve IME composition support.
-     */
 
     if (
       event.nativeEvent?.isComposing ||
@@ -386,9 +253,7 @@ export default function MessageComposer({
   };
 
   /**
-   * ==========================================================
-   * INPUT PLACEHOLDER
-   * ==========================================================
+   * PLACEHOLDER
    */
 
   let placeholder = "Write a message...";
@@ -396,112 +261,72 @@ export default function MessageComposer({
   if (!normalizedConversationId) {
     placeholder = "Select a conversation";
   } else if (isBlocked) {
-    placeholder = "Messaging is unavailable";
+    placeholder = "Messaging unavailable";
   } else if (isArchived) {
-    placeholder = "This conversation is archived";
+    placeholder = "Conversation archived";
   } else if (isConversationUnavailable) {
-    placeholder = "Messaging is currently unavailable";
+    placeholder = "Messaging unavailable";
   }
-
-  /**
-   * ==========================================================
-   * RENDER
-   * ==========================================================
-   */
 
   return (
     <div
       className={[
-        "shrink-0",
+        "w-full min-w-0 shrink-0",
         "border-t border-white/10",
         "bg-[#111115]",
-        "px-3 py-3",
-        "sm:px-5 sm:py-4",
+        "px-2 py-1.5",
+        "sm:px-3 sm:py-2",
         className,
       ].join(" ")}
     >
-      {/* ================================================= */}
-      {/* SEND ERROR                                        */}
-      {/* ================================================= */}
+      {/* ERROR */}
 
       {sendError && (
         <div
           role="alert"
-          className={[
-            "mb-3 flex items-start gap-2",
-            "rounded-lg",
-            "border border-rose-500/20",
-            "bg-rose-500/10",
-            "px-3 py-2.5",
-            "text-[12px]",
-            "leading-5",
-            "text-rose-300",
-          ].join(" ")}
+          className="mb-1.5 flex items-center gap-1.5 rounded-md bg-rose-500/10 px-2 py-1.5 text-[9px] text-rose-300"
         >
-          <AlertCircle
-            size={15}
-            className="mt-0.5 shrink-0"
-          />
-
-          <span>{sendError}</span>
+          <AlertCircle size={12} className="shrink-0" />
+          <span className="break-words">{sendError}</span>
         </div>
       )}
 
-      {/* ================================================= */}
-      {/* RATE LIMIT WARNING                                */}
-      {/* ================================================= */}
+      {/* RATE LIMIT */}
 
       {isRateLimited && (
         <div
           role="status"
-          className={[
-            "mb-3 flex items-start gap-2",
-            "rounded-lg",
-            "border border-[#ffcc42]/20",
-            "bg-[#ffcc42]/5",
-            "px-3 py-2.5",
-            "text-[12px]",
-            "leading-5",
-            "text-[#ffcc42]",
-          ].join(" ")}
+          className="mb-1.5 flex items-center gap-1.5 rounded-md bg-[#ffcc42]/5 px-2 py-1.5 text-[9px] text-[#ffcc42]"
         >
-          <Clock3
-            size={15}
-            className="mt-0.5 shrink-0"
-          />
-
+          <Clock3 size={12} className="shrink-0" />
           <span>
-            You're sending messages too quickly.
             Try again in{" "}
-            <strong>
-              {formatRetryCountdown(
-                retryRemainingMs
-              )}
-            </strong>
-            .
+            {formatRetryCountdown(retryRemainingMs)}.
           </span>
         </div>
       )}
 
-      {/* ================================================= */}
-      {/* COMPOSER CONTAINER                                */}
-      {/* ================================================= */}
+      {/* IMAGE COMPOSER */}
 
-      <div
-        className={[
-          "rounded-xl",
-          "border border-white/10",
-          "bg-[#1a1a20]",
-          "transition-colors",
-          "focus-within:border-[#ffcc42]/40",
-          "focus-within:ring-2",
-          "focus-within:ring-[#ffcc42]/10",
-        ].join(" ")}
-      >
-        {/* =============================================== */}
-        {/* TEXTAREA                                        */}
-        {/* =============================================== */}
+      {showPaidMediaComposer && (
+        <div className="mb-1.5 w-full min-w-0">
+          <ChatImageComposer
+            conversationId={normalizedConversationId}
+            isCreator={isCreator}
+            onClose={() =>
+              setShowPaidMediaComposer(false)
+            }
+            onMessageSent={(message) => {
+              setShowPaidMediaComposer(false);
+              onMessageSent?.(message);
+            }}
+          />
+        </div>
+      )}
 
+      {/* TEXT COMPOSER */}
+
+      <div className="w-full min-w-0 rounded-lg border border-white/10 bg-[#1a1a20] focus-within:border-[#ffcc42]/40">
         <textarea
           ref={textareaRef}
           value={draft}
@@ -512,134 +337,68 @@ export default function MessageComposer({
           rows={1}
           placeholder={placeholder}
           aria-label="Message"
-          className={[
-            "block w-full",
-            "resize-none",
-            "overflow-y-auto",
-            "bg-transparent",
-            "px-3.5 pb-1.5 pt-3",
-            "text-[12px]",
-            "leading-5",
-            "text-white",
-            "placeholder:text-zinc-500",
-            "outline-none",
-            "sm:text-[13px]",
-            "disabled:cursor-not-allowed",
-            "disabled:opacity-50",
-          ].join(" ")}
+          className="block max-h-[100px] min-h-8 w-full resize-none overflow-y-auto bg-transparent px-2.5 py-1.5 text-[11px] leading-4 text-white outline-none placeholder:text-zinc-500 disabled:opacity-50 sm:text-xs"
         />
 
-        {/* =============================================== */}
-        {/* BOTTOM TOOLBAR                                  */}
-        {/* =============================================== */}
+        {/* TOOLBAR */}
 
-        <div
-          className={[
-            "flex items-center",
-            "justify-between",
-            "gap-3",
-            "px-3 pb-2.5",
-          ].join(" ")}
-        >
-          {/* CHARACTER COUNTER / KEYBOARD HINT */}
+        <div className="flex min-w-0 items-center justify-between gap-1.5 px-1.5 pb-1.5">
+          <span
+            className={[
+              "hidden text-[9px] sm:inline",
+              remainingCharacters < 100
+                ? "text-[#ffcc42]"
+                : "text-zinc-600",
+            ].join(" ")}
+          >
+            {characterCount}/{MAX_MESSAGE_LENGTH}
+          </span>
 
-          <div className="min-w-0">
-            <p className="hidden text-[10px] text-zinc-500 sm:block">
-              Enter to send · Shift+Enter for new line
-            </p>
-
-            <p
-              className={[
-                "text-[10px]",
-                "sm:hidden",
-                remainingCharacters < 100
-                  ? "text-[#ffcc42]"
-                  : "text-zinc-500",
-              ].join(" ")}
-            >
-              {characterCount}/{MAX_MESSAGE_LENGTH}
-            </p>
-          </div>
-
-          {/* ============================================= */}
-          {/* SEND CONTROLS                                 */}
-          {/* ============================================= */}
-
-          <div className="flex shrink-0 items-center gap-3">
-            {/* DESKTOP CHARACTER COUNTER */}
-
-            <span
-              className={[
-                "hidden",
-                "text-[10px]",
-                "sm:inline",
-                remainingCharacters < 100
-                  ? "text-[#ffcc42]"
-                  : "text-zinc-500",
-              ].join(" ")}
-            >
-              {characterCount}/{MAX_MESSAGE_LENGTH}
-            </span>
-
-            {/* SEND BUTTON */}
+          <div className="ml-auto flex shrink-0 items-center gap-1.5">
+            {/* ATTACH IMAGE */}
 
             <button
               type="button"
-              onClick={() => {
-                void handleSend();
-              }}
-              disabled={!canSend}
-              aria-label={
-                isSendingMessage
-                  ? "Sending message"
-                  : "Send message"
+              onClick={() =>
+                setShowPaidMediaComposer(
+                  (previous) => !previous
+                )
               }
+              disabled={isConversationUnavailable}
+              aria-label="Attach image"
+              aria-expanded={showPaidMediaComposer}
+              title="Attach image"
+              className="flex h-7 w-7 items-center justify-center rounded-md border border-white/10 text-[#ffcc42] hover:bg-white/5 disabled:opacity-40"
+            >
+              <Paperclip size={13} />
+            </button>
+
+            {/* SEND TEXT */}
+
+            <button
+              type="button"
+              onClick={() => void handleSend()}
+              disabled={!canSend}
+              aria-label="Send message"
               title="Send message"
               className={[
-                "inline-flex",
-                "h-9 min-w-9",
-                "items-center justify-center",
-                "gap-2",
-                "rounded-lg",
-                "px-3",
-                "text-[12px]",
-                "font-bold",
-                "transition-all duration-200",
-                "focus-visible:outline-none",
-                "focus-visible:ring-2",
-                "focus-visible:ring-[#ffcc42]/50",
-
+                "flex h-7 min-w-7 items-center justify-center gap-1 rounded-md px-2 text-[9px] font-bold",
                 canSend
-                  ? [
-                      "bg-[#ffcc42]",
-                      "text-black",
-                      "hover:brightness-110",
-                    ].join(" ")
-                  : [
-                      "cursor-not-allowed",
-                      "bg-white/10",
-                      "text-zinc-500",
-                    ].join(" "),
+                  ? "bg-[#ffcc42] text-black hover:bg-[#f2bd2e]"
+                  : "cursor-not-allowed bg-white/10 text-zinc-500",
               ].join(" ")}
             >
               {isSendingMessage ? (
-                <>
-                  <Loader2
-                    size={16}
-                    className="animate-spin"
-                  />
-
-                  <span className="hidden sm:inline">
-                    Sending
-                  </span>
-                </>
+                <Loader2
+                  size={12}
+                  className="animate-spin"
+                />
               ) : (
                 <>
                   <span className="hidden sm:inline">
                     Send
                   </span>
-
-                  <Send size={16} />
+                  <Send size={12} />
                 </>
               )}
             </button>
@@ -647,18 +406,16 @@ export default function MessageComposer({
         </div>
       </div>
 
-      {/* ================================================= */}
-      {/* CONVERSATION STATUS NOTICE                        */}
-      {/* ================================================= */}
+      {/* STATUS */}
 
       {isBlocked && (
-        <p className="mt-2 text-center text-[11px] text-rose-400">
-          You cannot send messages in this conversation.
+        <p className="mt-1 text-center text-[9px] text-rose-400">
+          Messaging is disabled.
         </p>
       )}
 
       {isArchived && (
-        <p className="mt-2 text-center text-[11px] text-amber-400">
+        <p className="mt-1 text-center text-[9px] text-amber-400">
           This conversation is archived.
         </p>
       )}

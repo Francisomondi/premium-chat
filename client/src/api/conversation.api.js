@@ -1,3 +1,4 @@
+
 import axiosInstance from "./axiosInstance.js";
 
 /**
@@ -12,23 +13,13 @@ import axiosInstance from "./axiosInstance.js";
  * - Fetching conversation details
  * - Loading message history
  * - Sending text messages
+ * - Sending image/video messages
  *
  * Authentication:
- *
- * Uses the existing Axios instance with
- * HTTP-only authentication cookies.
+ * Uses the existing Axios instance with HTTP-only cookies.
  *
  * IMPORTANT:
- *
  * The Axios base URL already includes /api.
- *
- * Therefore, requests use:
- *
- * /conversations
- *
- * NOT:
- *
- * /api/conversations
  */
 
 /**
@@ -42,11 +33,8 @@ const CONVERSATION_ENDPOINT = "/conversations";
 const OBJECT_ID_REGEX = /^[0-9a-fA-F]{24}$/;
 
 const DEFAULT_PAGE = 1;
-
 const DEFAULT_CONVERSATION_LIMIT = 20;
-
 const DEFAULT_MESSAGE_LIMIT = 30;
-
 const MAX_PAGE_SIZE = 100;
 
 /**
@@ -95,30 +83,24 @@ const validatePositiveInteger = (
 /**
  * Validate a message client ID.
  *
- * The backend requires:
- *
- * 8–100 characters.
+ * Backend requirement: 8–100 characters.
  */
 const validateClientMessageId = (value) => {
   if (
     typeof value !== "string" ||
-    value.length < 8 ||
-    value.length > 100
+    value.trim().length < 8 ||
+    value.trim().length > 100
   ) {
     throw new Error(
       "clientMessageId must contain between 8 and 100 characters."
     );
   }
 
-  return value;
+  return value.trim();
 };
 
 /**
- * Validate message content.
- *
- * The backend accepts:
- *
- * 1–5000 characters.
+ * Validate text message content.
  */
 const validateMessageContent = (content) => {
   if (
@@ -138,8 +120,6 @@ const validateMessageContent = (content) => {
  * ============================================================
  * API ERROR HELPER
  * ============================================================
- *
- * Extract a readable message from Axios errors.
  */
 
 export const getApiErrorMessage = (
@@ -170,11 +150,6 @@ export const getApiErrorMessage = (
  * ============================================================
  * GET RATE-LIMIT RETRY DELAY
  * ============================================================
- *
- * Returns the number of milliseconds the
- * client should wait after HTTP 429.
- *
- * Returns null for non-rate-limit errors.
  */
 
 export const getRateLimitRetryAfterMs = (error) => {
@@ -192,13 +167,6 @@ export const getRateLimitRetryAfterMs = (error) => {
   ) {
     return retryAfterMs;
   }
-
-  /**
-   * Fallback to the standard Retry-After
-   * response header.
-   *
-   * The current backend sends seconds.
-   */
 
   const retryAfterHeader =
     error?.response?.headers?.["retry-after"];
@@ -223,12 +191,6 @@ export const getRateLimitRetryAfterMs = (error) => {
  * ============================================================
  *
  * POST /api/conversations
- *
- * Creates a conversation between the
- * authenticated user and a creator.
- *
- * If the conversation already exists,
- * the backend returns the existing one.
  */
 
 export const createOrGetConversation = async ({
@@ -255,8 +217,6 @@ export const createOrGetConversation = async ({
  * ============================================================
  *
  * GET /api/conversations
- *
- * Supports pagination.
  */
 
 export const getMyConversations = async ({
@@ -298,11 +258,10 @@ export const getMyConversations = async ({
 export const getConversationById = async (
   conversationId
 ) => {
-  const validConversationId =
-    validateObjectId(
-      conversationId,
-      "conversationId"
-    );
+  const validConversationId = validateObjectId(
+    conversationId,
+    "conversationId"
+  );
 
   const response = await axiosInstance.get(
     `${CONVERSATION_ENDPOINT}/${validConversationId}`
@@ -318,13 +277,7 @@ export const getConversationById = async (
  *
  * GET /api/conversations/:conversationId/messages
  *
- * Supports:
- *
- * - Message history pagination
- * - Cursor-based loading
- * - Fetching older messages
- *
- * The backend uses the "before" cursor.
+ * Supports cursor-based pagination.
  */
 
 export const getConversationMessages = async ({
@@ -332,11 +285,10 @@ export const getConversationMessages = async ({
   before = null,
   limit = DEFAULT_MESSAGE_LIMIT,
 }) => {
-  const validConversationId =
-    validateObjectId(
-      conversationId,
-      "conversationId"
-    );
+  const validConversationId = validateObjectId(
+    conversationId,
+    "conversationId"
+  );
 
   const validLimit = validatePositiveInteger(
     limit,
@@ -346,13 +298,6 @@ export const getConversationMessages = async ({
   const params = {
     limit: validLimit,
   };
-
-  /**
-   * Only include the cursor when provided.
-   *
-   * The backend's exact cursor format
-   * should be preserved.
-   */
 
   if (
     before !== null &&
@@ -383,10 +328,8 @@ export const getConversationMessages = async ({
  * GENERATE CLIENT MESSAGE ID
  * ============================================================
  *
- * Every new logical message should receive
- * a unique clientMessageId.
- *
- * Reuse the same ID when retrying that message.
+ * Generate one ID per logical message.
+ * Reuse it when retrying the same message.
  */
 
 export const generateClientMessageId = () => {
@@ -408,16 +351,6 @@ export const generateClientMessageId = () => {
  * ============================================================
  *
  * POST /api/conversations/:conversationId/messages
- *
- * Sends a text message using REST.
- *
- * IMPORTANT:
- *
- * The backend implements idempotency using
- * clientMessageId.
- *
- * Do not generate a new ID when retrying
- * the same logical message.
  */
 
 export const sendTextMessage = async ({
@@ -425,26 +358,76 @@ export const sendTextMessage = async ({
   content,
   clientMessageId,
 }) => {
-  const validConversationId =
-    validateObjectId(
-      conversationId,
-      "conversationId"
-    );
+  const validConversationId = validateObjectId(
+    conversationId,
+    "conversationId"
+  );
 
   const validContent =
     validateMessageContent(content);
 
   const validClientMessageId =
-    validateClientMessageId(
-      clientMessageId
-    );
+    validateClientMessageId(clientMessageId);
 
   const response = await axiosInstance.post(
     `${CONVERSATION_ENDPOINT}/${validConversationId}/messages`,
     {
       clientMessageId: validClientMessageId,
-
       content: validContent,
+    }
+  );
+
+  return response.data;
+};
+
+/**
+ * ============================================================
+ * SEND MEDIA MESSAGE
+ * ============================================================
+ *
+ * POST /api/conversations/:conversationId/media
+ *
+ * Attaches an existing creator-owned, approved
+ * image or video to a conversation.
+ *
+ * The media must already exist on the backend.
+ * This endpoint does not upload media files.
+ */
+
+export const sendMediaMessage = async ({
+  conversationId,
+  mediaId,
+  content = "",
+  clientMessageId,
+}) => {
+  const validConversationId = validateObjectId(
+    conversationId,
+    "conversationId"
+  );
+
+  const validMediaId = validateObjectId(
+    mediaId,
+    "mediaId"
+  );
+
+  const validClientMessageId =
+    validateClientMessageId(clientMessageId);
+
+  if (
+    typeof content !== "string" ||
+    content.length > 5000
+  ) {
+    throw new Error(
+      "Media caption must not exceed 5000 characters."
+    );
+  }
+
+  const response = await axiosInstance.post(
+    `${CONVERSATION_ENDPOINT}/${validConversationId}/media`,
+    {
+      clientMessageId: validClientMessageId,
+      mediaId: validMediaId,
+      content: content.trim(),
     }
   );
 
@@ -455,25 +438,17 @@ export const sendTextMessage = async ({
  * ============================================================
  * CONVERSATION API OBJECT
  * ============================================================
- *
- * Optional grouped access for other modules.
  */
 
 export const conversationApi = {
   createOrGetConversation,
-
   getMyConversations,
-
   getConversationById,
-
   getConversationMessages,
-
   sendTextMessage,
-
+  sendMediaMessage,
   generateClientMessageId,
-
   getApiErrorMessage,
-
   getRateLimitRetryAfterMs,
 };
 

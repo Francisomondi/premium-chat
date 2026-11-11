@@ -28,23 +28,6 @@ import api from "../axiosInstance.js";
  * ============================================================
  * CREATE MEDIA UPLOAD INTENT
  * ============================================================
- *
- * POST /api/media/uploads
- *
- * Expected payload:
- *
- * {
- *   conversationId,
- *   mediaType,
- *   mimeType,
- *   fileSize,
- *   accessPolicy,
- *   priceMinor,
- *   currency,
- *   rightsConfirmed,
- *   allDepictedAdultsAndConsented,
- *   attestationVersion
- * }
  */
 
 export const createMediaUploadIntent = async (
@@ -93,20 +76,20 @@ export const createMediaUploadIntent = async (
     }
   );
 
-  return response.data;
+  // The backend responds with:
+  // { success, message, data: { media, upload } }
+  //
+  // ChatImageComposer expects:
+  // { media, upload }
+  //
+  // Keep the fallback for compatibility with an unwrapped response.
+  return response.data?.data ?? response.data;
 };
 
 /**
  * ============================================================
  * UPLOAD FILE DIRECTLY TO PRIVATE R2
  * ============================================================
- *
- * PUT <presigned upload URL>
- *
- * This request must NOT use the authenticated
- * PremiumChat Axios instance.
- *
- * The backend supplies the required headers.
  */
 
 export const uploadMediaFile = async ({
@@ -161,7 +144,8 @@ export const uploadMediaFile = async ({
     );
 
     return {
-      success: response.status >= 200 &&
+      success:
+        response.status >= 200 &&
         response.status < 300,
       status: response.status,
     };
@@ -180,13 +164,6 @@ export const uploadMediaFile = async ({
  * ============================================================
  * COMPLETE MEDIA UPLOAD
  * ============================================================
- *
- * POST /api/media/:mediaId/complete
- *
- * The backend verifies the stored object and moves
- * the media into PROCESSING.
- *
- * This does NOT approve or publish the media.
  */
 
 export const completeMediaUpload = async (
@@ -215,15 +192,37 @@ export const completeMediaUpload = async (
 
 /**
  * ============================================================
+ * REQUEST BLURRED CHAT IMAGE PREVIEW
+ * ============================================================
+ */
+
+export const getMediaPreview = async (
+  mediaId,
+  options = {}
+) => {
+  if (
+    typeof mediaId !== "string" ||
+    !mediaId.trim()
+  ) {
+    throw new Error("A valid media ID is required.");
+  }
+
+  const response = await api.get(
+    `/media/${encodeURIComponent(
+      mediaId.trim()
+    )}/preview`,
+    {
+      signal: options.signal,
+    }
+  );
+
+  return response.data;
+};
+
+/**
+ * ============================================================
  * REQUEST AUTHORIZED MEDIA DELIVERY
  * ============================================================
- *
- * GET /api/media/:mediaId/access
- *
- * The backend determines whether the authenticated
- * viewer is allowed to access the media.
- *
- * Never construct private media URLs on the client.
  */
 
 export const getMediaAccess = async (
@@ -249,9 +248,58 @@ export const getMediaAccess = async (
   return response.data;
 };
 
+/**
+ * ============================================================
+ * PURCHASE LOCKED MEDIA
+ * ============================================================
+ */
+
+export const purchaseMedia = async ({
+  mediaId,
+  phoneNumber,
+  clientRequestId,
+  signal,
+}) => {
+  if (
+    typeof mediaId !== "string" ||
+    !mediaId.trim()
+  ) {
+    throw new Error("A valid media ID is required.");
+  }
+
+  if (
+    typeof phoneNumber !== "string" ||
+    !phoneNumber.trim()
+  ) {
+    throw new Error("Your M-Pesa phone number is required.");
+  }
+
+  if (
+    typeof clientRequestId !== "string" ||
+    !/^[A-Za-z0-9_-]{8,100}$/.test(clientRequestId)
+  ) {
+    throw new Error("A valid purchase request ID is required.");
+  }
+
+  const response = await api.post(
+    `/media/${encodeURIComponent(mediaId.trim())}/purchase`,
+    {
+      phoneNumber: phoneNumber.trim(),
+      clientRequestId,
+    },
+    {
+      signal,
+    }
+  );
+
+  return response.data;
+};
+
 export default {
   createMediaUploadIntent,
   uploadMediaFile,
   completeMediaUpload,
   getMediaAccess,
+  purchaseMedia,
+  getMediaPreview,
 };

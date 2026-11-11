@@ -2,6 +2,10 @@
 import mongoose from "mongoose";
 
 import PaymentTransaction from "../models/PaymentTransaction.model.js";
+import MpesaCallbackEvent, {
+  MPESA_CALLBACK_EVENT_STATUSES,
+  MPESA_CALLBACK_SETTLEMENT_STATUSES,
+} from "../models/MpesaCallbackEvent.model.js";
 
 import MediaPurchase, {
   MEDIA_PURCHASE_STATUSES,
@@ -129,19 +133,42 @@ const validateMediaPaymentRelationship = ({
   }
 };
 
-/**
- * Check whether a previously committed settlement
- * is internally consistent.
- */
+
 const isExactCommittedMediaSettlement = ({
   payment,
   purchase,
   verification,
+  expectedEvidenceSource =
+    FINANCIAL_EVIDENCE_SOURCES.PROVIDER_SETTLEMENT,
+  expectedReceiptNumber,
+  expectedEvidenceReference,
 }) => {
+  if (!payment || !purchase || !verification) {
+    return false;
+  }
+
+  const isStkQueryEvidence =
+    expectedEvidenceSource ===
+    FINANCIAL_EVIDENCE_SOURCES.DARAJA_STK_QUERY;
+
+  const receiptMatches = isStkQueryEvidence
+    ? payment.providerReceipt === null &&
+      verification.mpesaReceiptNumber === null
+    : validString(payment.providerReceipt) &&
+      verification.mpesaReceiptNumber ===
+        payment.providerReceipt;
+
+  const evidenceReferenceMatches =
+    !expectedEvidenceReference ||
+    verification.evidenceReference ===
+      expectedEvidenceReference;
+
+  const expectedReceiptMatches =
+    expectedReceiptNumber === undefined ||
+    verification.mpesaReceiptNumber ===
+      expectedReceiptNumber;
+
   return Boolean(
-    payment &&
-    purchase &&
-    verification &&
     payment.purpose === PAYMENT_PURPOSES.MEDIA_PURCHASE &&
     payment.provider === PAYMENT_PROVIDERS.MPESA &&
     !payment.subscriptionId &&
@@ -152,14 +179,15 @@ const isExactCommittedMediaSettlement = ({
     verification.status ===
       FINANCIAL_VERIFICATION_STATUSES.VERIFIED &&
     verification.evidenceSource ===
-      FINANCIAL_EVIDENCE_SOURCES.PROVIDER_SETTLEMENT &&
+      expectedEvidenceSource &&
     verification.provider === PAYMENT_PROVIDERS.MPESA &&
     verification.subscriptionId === null &&
     verification.providerTransactionId ===
       payment.providerTransactionId &&
     validString(payment.providerTransactionId) &&
-    validString(payment.providerReceipt) &&
-    verification.mpesaReceiptNumber === payment.providerReceipt &&
+    receiptMatches &&
+    expectedReceiptMatches &&
+    evidenceReferenceMatches &&
     verification.verifiedAmountMinor === payment.amountMinor &&
     verification.verifiedCurrency === payment.currency &&
     verification.verifiedCurrency === "KES" &&
@@ -174,6 +202,7 @@ const isExactCommittedMediaSettlement = ({
     validDate(purchase.activatedAt)
   );
 };
+
 
 /**
  * Build the standard response for an already-settled purchase.
@@ -230,13 +259,13 @@ const validateMerchantEvidence = ({
   };
 };
 
-/**
- * Commit financial verification and purchase activation
- * atomically. No subscription lifecycle fields are modified.
- */
 const commitMediaPurchaseSettlement = async ({
   paymentId,
   settlement,
+  evidenceSource =
+    FINANCIAL_EVIDENCE_SOURCES.PROVIDER_SETTLEMENT,
+  callbackEventId = null,
+  settlementLeaseOwner = null,
 }) => {
   const session = await mongoose.startSession();
 
@@ -260,6 +289,71 @@ const commitMediaPurchaseSettlement = async ({
         fail("MEDIA_PURCHASE_NOT_FOUND", 404);
       }
 
+            let callbackEvent = null;
+
+      if (
+        evidenceSource ===
+        FINANCIAL_EVIDENCE_SOURCES.DARAJA_STK_QUERY
+      ) {
+          if (!validObjectId(callbackEventId)) {
+            fail("INVALID_CALLBACK_EVENT_ID");
+          }
+
+          if (!validString(settlementLeaseOwner)) {
+            fail("INVALID_SETTLEMENT_LEASE_OWNER");
+          }
+
+        callbackEvent =
+          await MpesaCallbackEvent.findOne({
+            _id: callbackEventId,
+            status: MPESA_CALLBACK_EVENT_STATUSES.RECONCILED,
+            settlementStatus: {
+              $in: [
+                MPESA_CALLBACK_SETTLEMENT_STATUSES.PENDING,
+                MPESA_CALLBACK_SETTLEMENT_STATUSES.PROCESSING,
+                MPESA_CALLBACK_SETTLEMENT_STATUSES.RETRY_SCHEDULED,
+              ],
+            },
+
+            settlementLeaseOwner,
+
+              settlementLeaseExpiresAt: {
+                $gt: new Date(),
+            },
+            hasConflict: false,
+            manualReviewRequiredAt: null,
+            paymentId: payment._id,
+            checkoutRequestId:
+              payment.providerTransactionId,
+            "stkQueryEvidence.authenticatedQuery": true,
+            "stkQueryEvidence.checkoutRequestId":
+              payment.providerTransactionId,
+            "stkQueryEvidence.resultCode": "0",
+          }).session(session);
+
+        if (!callbackEvent) {
+          fail(
+            "RECONCILED_STK_QUERY_CALLBACK_EVIDENCE_NOT_FOUND",
+            409
+          );
+        }
+
+        if (
+          !validString(
+            callbackEvent.stkQueryEvidence.evidenceReference
+          )
+        ) {
+          fail("STK_QUERY_EVIDENCE_REFERENCE_MISSING", 409);
+        }
+
+        if (
+          settlement.evidenceReference !==
+          callbackEvent.stkQueryEvidence.evidenceReference
+        ) {
+          fail("STK_QUERY_EVIDENCE_REFERENCE_MISMATCH", 409);
+        }
+      }
+
       /**
        * Idempotent replay:
        * accept only an exact previously committed settlement.
@@ -280,8 +374,11 @@ const commitMediaPurchaseSettlement = async ({
             payment,
             purchase,
             verification: existing,
+            expectedEvidenceSource: evidenceSource,
+            expectedReceiptNumber: settlement.receiptNumber,
+            expectedEvidenceReference:
+              settlement.evidenceReference,
           }) &&
-          existing.mpesaReceiptNumber === settlement.receiptNumber &&
           existing.verifiedAmountMinor === settlement.amountMinor &&
           existing.verifiedCurrency === settlement.currency
         ) {
@@ -296,10 +393,7 @@ const commitMediaPurchaseSettlement = async ({
         fail("CONFLICTING_EXISTING_MEDIA_SETTLEMENT", 409);
       }
 
-      validateMediaPaymentRelationship({
-        payment,
-        purchase,
-      });
+
 
       const existingVerification =
         await MpesaFinancialVerification.findOne({
@@ -313,7 +407,15 @@ const commitMediaPurchaseSettlement = async ({
         );
       }
 
-      const now = new Date();
+            const now =
+        evidenceSource ===
+        FINANCIAL_EVIDENCE_SOURCES.DARAJA_STK_QUERY
+          ? callbackEvent.stkQueryEvidence.queriedAt
+          : new Date();
+
+      if (!validDate(now)) {
+        fail("INVALID_SETTLEMENT_VERIFICATION_TIMESTAMP", 409);
+      }
 
       await MpesaFinancialVerification.create(
         [
@@ -322,8 +424,7 @@ const commitMediaPurchaseSettlement = async ({
             subscriptionId: null,
             provider: PAYMENT_PROVIDERS.MPESA,
             status: FINANCIAL_VERIFICATION_STATUSES.VERIFIED,
-            evidenceSource:
-              FINANCIAL_EVIDENCE_SOURCES.PROVIDER_SETTLEMENT,
+            evidenceSource,
             providerTransactionId:
               payment.providerTransactionId,
             mpesaReceiptNumber: settlement.receiptNumber,
@@ -479,10 +580,6 @@ export const recordMediaPurchaseSettlement = async ({
     fail("CONFLICTING_EXISTING_MEDIA_SETTLEMENT", 409);
   }
 
-  validateMediaPaymentRelationship({
-    payment,
-    purchase,
-  });
 
   /**
    * This adapter currently fails closed until the
@@ -505,6 +602,118 @@ export const recordMediaPurchaseSettlement = async ({
   });
 };
 
+/**
+ * Record a media-purchase settlement using authenticated
+ * Daraja STK Query evidence.
+ *
+ * Callback financial metadata is never used as proof
+ * of amount or receipt.
+ */
+export const recordMediaPurchaseStkQuerySettlement = async ({
+  paymentId,
+  callbackEventId,
+  settlementLeaseOwner,
+} = {}) => {
+  if (!validObjectId(paymentId)) {
+    fail("INVALID_PAYMENT_ID");
+  }
+
+  if (!validObjectId(callbackEventId)) {
+    fail("INVALID_CALLBACK_EVENT_ID");
+  }
+
+  if (!validString(settlementLeaseOwner)) {
+  fail("INVALID_SETTLEMENT_LEASE_OWNER");
+}
+
+  const payment =
+    await PaymentTransaction.findById(paymentId);
+
+  if (!payment) {
+    fail("PAYMENT_NOT_FOUND", 404);
+  }
+
+  if (
+    payment.purpose !== PAYMENT_PURPOSES.MEDIA_PURCHASE ||
+    payment.provider !== PAYMENT_PROVIDERS.MPESA ||
+    payment.subscriptionId ||
+    !validString(payment.providerTransactionId)
+  ) {
+    fail("NOT_A_VALID_MPESA_MEDIA_PURCHASE_PAYMENT");
+  }
+
+  const purchase =
+    await MediaPurchase.findOne({
+      paymentId: payment._id,
+    });
+
+  if (!purchase) {
+    fail("MEDIA_PURCHASE_NOT_FOUND", 404);
+  }
+
+  validateMediaPaymentRelationship({
+    payment,
+    purchase,
+  });
+
+  const callbackEvent =
+    await MpesaCallbackEvent.findOne({
+      _id: callbackEventId,
+      paymentId: payment._id,
+      checkoutRequestId:
+        payment.providerTransactionId,
+      status: MPESA_CALLBACK_EVENT_STATUSES.RECONCILED,
+      settlementStatus: {
+        $in: [
+          MPESA_CALLBACK_SETTLEMENT_STATUSES.PENDING,
+          MPESA_CALLBACK_SETTLEMENT_STATUSES.PROCESSING,
+          MPESA_CALLBACK_SETTLEMENT_STATUSES.RETRY_SCHEDULED,
+        ],
+      },
+      hasConflict: false,
+      manualReviewRequiredAt: null,
+      "stkQueryEvidence.authenticatedQuery": true,
+      "stkQueryEvidence.checkoutRequestId":
+        payment.providerTransactionId,
+      "stkQueryEvidence.resultCode": "0",
+    });
+
+  if (!callbackEvent) {
+    fail(
+      "RECONCILED_STK_QUERY_CALLBACK_EVIDENCE_NOT_FOUND",
+      409
+    );
+  }
+
+  const queryEvidence =
+    callbackEvent.stkQueryEvidence;
+
+  if (
+    !validString(queryEvidence.evidenceReference) ||
+    !validDate(queryEvidence.queriedAt)
+  ) {
+    fail("INVALID_STK_QUERY_EVIDENCE", 409);
+  }
+
+  const settlement = {
+    receiptNumber: null,
+    amountMinor: payment.amountMinor,
+    currency: payment.currency,
+    evidenceReference:
+      queryEvidence.evidenceReference,
+  };
+
+  return commitMediaPurchaseSettlement({
+    paymentId: payment._id,
+    settlement,
+    evidenceSource:
+      FINANCIAL_EVIDENCE_SOURCES.DARAJA_STK_QUERY,
+    callbackEventId,
+    settlementLeaseOwner,
+  });
+};
+
 export default {
   recordMediaPurchaseSettlement,
+  recordMediaPurchaseStkQuerySettlement,
 };

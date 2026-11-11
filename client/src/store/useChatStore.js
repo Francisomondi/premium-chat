@@ -1,3 +1,4 @@
+
 import { create } from "zustand";
 
 import {
@@ -9,137 +10,75 @@ import {
   generateClientMessageId,
   getApiErrorMessage,
   getRateLimitRetryAfterMs,
+  sendMediaMessage as sendMediaMessageApi,
 } from "../api/conversation.api.js";
 
 import { chatSocket } from "../lib/chatSocket.js";
-
 import { useChatSocketStore } from "./useChatSocketStore.js";
 
-/**
- * ============================================================
- * PREMIUMCHAT — ZUSTAND CHAT STORE
- * ============================================================
- *
- * Responsibilities:
- *
- * 1. Load conversations.
- * 2. Manage the active conversation.
- * 3. Fetch message history.
- * 4. Send text messages.
- * 5. Receive real-time messages.
- * 6. Prevent duplicate messages.
- * 7. Handle pagination.
- * 8. Handle rate limiting.
- * 9. Clean up chat state.
- *
- * Authentication and socket connection lifecycle are
- * managed separately by useAuthStore and
- * useChatSocketStore.
- */
-
-/**
- * ============================================================
- * CONSTANTS
- * ============================================================
- */
-
 const CONVERSATION_PAGE_SIZE = 20;
-
 const MESSAGE_PAGE_SIZE = 30;
-
 const SOCKET_ACK_TIMEOUT_MS = 10000;
-
 const MAX_MESSAGE_LENGTH = 5000;
 
 const INITIAL_STATE = {
   conversations: [],
-
   activeConversationId: null,
-
   activeConversation: null,
-
   messagesByConversation: {},
-
   messagePagination: {},
-
   isLoadingConversations: false,
-
   isLoadingConversation: false,
-
   isLoadingMessages: false,
-
   isSendingMessage: false,
-
   conversationsError: null,
-
   conversationError: null,
-
   messagesError: null,
-
   sendError: null,
-
   rateLimitedUntil: null,
 };
 
-/**
- * ============================================================
- * INTERNAL HELPERS
- * ============================================================
- */
-
 const normalizeId = (value) => {
   if (!value) return null;
-
   return String(value).toLowerCase();
 };
 
 /**
- * Unwrap the API response.
+ * Normalize Axios responses and backend response envelopes.
  *
- * The backend returns:
- *
- * {
- *   success: true,
- *   data: ...
- * }
+ * Supports:
+ * 1. Axios response: { data: { success, data: {...} } }
+ * 2. API helper response: { success, data: {...} }
+ * 3. Already-unwrapped response: { message: {...} }
  */
-
 const unwrapData = (response) => {
-  return response?.data ?? response;
-};
+  let data = response?.data ?? response;
 
-/**
- * Extract a conversation from supported
- * API response shapes.
- */
+  if (
+    data &&
+    typeof data === "object" &&
+    Object.prototype.hasOwnProperty.call(data, "data")
+  ) {
+    data = data.data;
+  }
+
+  return data;
+};
 
 const extractConversation = (response) => {
   const data = unwrapData(response);
-
   return data?.conversation ?? data;
 };
 
-/**
- * Extract a message from supported
- * API response shapes.
- */
-
 const extractMessage = (response) => {
   const data = unwrapData(response);
-
   return data?.message ?? data;
 };
-
-/**
- * Extract conversation lists.
- */
 
 const extractConversations = (response) => {
   const data = unwrapData(response);
 
-  if (Array.isArray(data)) {
-    return data;
-  }
+  if (Array.isArray(data)) return data;
 
   if (Array.isArray(data?.conversations)) {
     return data.conversations;
@@ -148,16 +87,10 @@ const extractConversations = (response) => {
   return [];
 };
 
-/**
- * Extract message history.
- */
-
 const extractMessages = (response) => {
   const data = unwrapData(response);
 
-  if (Array.isArray(data)) {
-    return data;
-  }
+  if (Array.isArray(data)) return data;
 
   if (Array.isArray(data?.messages)) {
     return data.messages;
@@ -167,23 +100,31 @@ const extractMessages = (response) => {
 };
 
 /**
- * Merge messages without duplicates.
+ * Merge by MongoDB ID or sender/clientMessageId.
  *
- * Messages are deduplicated by:
- *
- * - MongoDB message ID
- * - clientMessageId + senderId
+ * Incoming server message fields replace stale fields.
+ * Refreshed message.media replaces the previous media
+ * object so authorization and purchase states stay current.
  */
-
 const mergeMessages = (
   existingMessages = [],
   incomingMessages = []
 ) => {
   const result = [];
+  const indexByMessageId = new Map();
+  const indexByClientKey = new Map();
 
-  const seenIds = new Set();
+  const getMessageId = (message) =>
+    normalizeId(message?._id ?? message?.id);
 
-  const seenClientIds = new Set();
+  const getClientKey = (message) => {
+    const senderId = normalizeId(message?.senderId);
+    const clientMessageId = message?.clientMessageId;
+
+    return senderId && clientMessageId
+      ? `${senderId}:${clientMessageId}`
+      : null;
+  };
 
   for (const message of [
     ...existingMessages,
@@ -191,43 +132,48 @@ const mergeMessages = (
   ]) {
     if (!message) continue;
 
-    const messageId = normalizeId(
-      message._id ?? message.id
-    );
+    const messageId = getMessageId(message);
+    const clientKey = getClientKey(message);
 
-    const senderId = normalizeId(
-      message.senderId
-    );
-
-    const clientMessageId =
-      message.clientMessageId;
-
-    const clientKey =
-      senderId && clientMessageId
-        ? `${senderId}:${clientMessageId}`
-        : null;
+    let existingIndex = messageId
+      ? indexByMessageId.get(messageId)
+      : undefined;
 
     if (
-      (messageId && seenIds.has(messageId)) ||
-      (clientKey && seenClientIds.has(clientKey))
+      existingIndex === undefined &&
+      clientKey
     ) {
+      existingIndex = indexByClientKey.get(clientKey);
+    }
+
+    if (existingIndex !== undefined) {
+      result[existingIndex] = {
+        ...result[existingIndex],
+        ...message,
+      };
+
+      if (messageId) {
+        indexByMessageId.set(messageId, existingIndex);
+      }
+
+      if (clientKey) {
+        indexByClientKey.set(clientKey, existingIndex);
+      }
+
       continue;
     }
 
+    const newIndex = result.length;
+    result.push(message);
+
     if (messageId) {
-      seenIds.add(messageId);
+      indexByMessageId.set(messageId, newIndex);
     }
 
     if (clientKey) {
-      seenClientIds.add(clientKey);
+      indexByClientKey.set(clientKey, newIndex);
     }
-
-    result.push(message);
   }
-
-  /**
-   * Oldest messages first.
-   */
 
   result.sort((a, b) => {
     return (
@@ -238,11 +184,6 @@ const mergeMessages = (
 
   return result;
 };
-
-/**
- * Move the most recently active conversation
- * to the top of the sidebar.
- */
 
 const sortConversations = (conversations) => {
   return [...conversations].sort((a, b) => {
@@ -258,26 +199,18 @@ const sortConversations = (conversations) => {
   });
 };
 
-/**
- * Add or update a conversation.
- */
-
 const upsertConversation = (
   conversations,
   incomingConversation
 ) => {
-  if (!incomingConversation) {
-    return conversations;
-  }
+  if (!incomingConversation) return conversations;
 
   const incomingId = normalizeId(
     incomingConversation._id ??
       incomingConversation.id
   );
 
-  if (!incomingId) {
-    return conversations;
-  }
+  if (!incomingId) return conversations;
 
   const existingIndex = conversations.findIndex(
     (conversation) =>
@@ -303,21 +236,17 @@ const upsertConversation = (
   return sortConversations(updated);
 };
 
-/**
- * ============================================================
- * STORE
- * ============================================================
- */
+const extractPagination = (response) => {
+  const data = unwrapData(response);
+  return data?.pagination ?? {};
+};
 
 export const useChatStore = create((set, get) => ({
   ...INITIAL_STATE,
 
   /**
-   * ========================================================
    * LOAD CONVERSATIONS
-   * ========================================================
    */
-
   loadConversations: async () => {
     set({
       isLoadingConversations: true,
@@ -334,10 +263,7 @@ export const useChatStore = create((set, get) => ({
         extractConversations(response);
 
       set({
-        conversations: sortConversations(
-          conversations
-        ),
-
+        conversations: sortConversations(conversations),
         isLoadingConversations: false,
       });
 
@@ -345,9 +271,7 @@ export const useChatStore = create((set, get) => ({
     } catch (error) {
       set({
         isLoadingConversations: false,
-
-        conversationsError:
-          getApiErrorMessage(error),
+        conversationsError: getApiErrorMessage(error),
       });
 
       return [];
@@ -355,31 +279,24 @@ export const useChatStore = create((set, get) => ({
   },
 
   /**
-   * ========================================================
    * CREATE OR OPEN CONVERSATION
-   * ========================================================
    */
-
-  openConversationWithCreator: async (
-    creatorId
-  ) => {
+  openConversationWithCreator: async (creatorId) => {
     set({
       isLoadingConversation: true,
       conversationError: null,
     });
 
     try {
-      const response =
-        await createOrGetConversation({
-          creatorId,
-        });
+      const response = await createOrGetConversation({
+        creatorId,
+      });
 
       const conversation =
         extractConversation(response);
 
       const conversationId = normalizeId(
-        conversation?._id ??
-          conversation?.id
+        conversation?._id ?? conversation?.id
       );
 
       if (!conversationId) {
@@ -393,21 +310,16 @@ export const useChatStore = create((set, get) => ({
           state.conversations,
           conversation
         ),
-
         isLoadingConversation: false,
       }));
 
-      await get().selectConversation(
-        conversationId
-      );
+      await get().selectConversation(conversationId);
 
       return conversation;
     } catch (error) {
       set({
         isLoadingConversation: false,
-
-        conversationError:
-          getApiErrorMessage(error),
+        conversationError: getApiErrorMessage(error),
       });
 
       return null;
@@ -415,96 +327,60 @@ export const useChatStore = create((set, get) => ({
   },
 
   /**
-   * ========================================================
    * SELECT CONVERSATION
-   * ========================================================
    */
-
-  selectConversation: async (
-    conversationId
-  ) => {
+  selectConversation: async (conversationId) => {
     const id = normalizeId(conversationId);
 
-    if (!id) {
-      return null;
-    }
+    if (!id) return null;
 
-    const previousId =
-      get().activeConversationId;
-
-    /**
-     * Leave the previous Socket.IO room.
-     */
+    const previousId = get().activeConversationId;
 
     if (
       previousId &&
       previousId !== id &&
       chatSocket.connected
     ) {
-      chatSocket.emit(
-        "conversation:leave",
-        {
-          conversationId: previousId,
-        }
-      );
+      chatSocket.emit("conversation:leave", {
+        conversationId: previousId,
+      });
     }
 
     set({
       activeConversationId: id,
-
       activeConversation: null,
-
       isLoadingConversation: true,
-
       conversationError: null,
-
       messagesError: null,
     });
 
     try {
-      const response =
-        await getConversationById(id);
-
+      const response = await getConversationById(id);
       const conversation =
         extractConversation(response);
 
       set((state) => ({
         activeConversation: conversation,
-
         conversations: upsertConversation(
           state.conversations,
           conversation
         ),
-
         isLoadingConversation: false,
       }));
 
-      /**
-       * Load the latest messages.
-       */
-
       await get().loadMessages(id);
 
-      /**
-       * Join the private Socket.IO room.
-       */
-
       if (chatSocket.connected) {
-        chatSocket.emit(
-          "conversation:join",
-          {
-            conversationId: id,
-          }
-        );
+        chatSocket.emit("conversation:join", {
+          conversationId: id,
+        });
       }
 
       return conversation;
     } catch (error) {
       set({
         isLoadingConversation: false,
-
-        conversationError:
-          getApiErrorMessage(error),
+        conversationError: getApiErrorMessage(error),
       });
 
       return null;
@@ -512,19 +388,12 @@ export const useChatStore = create((set, get) => ({
   },
 
   /**
-   * ========================================================
-   * LOAD MESSAGE HISTORY
-   * ========================================================
+   * LOAD / REFRESH MESSAGE HISTORY
    */
-
-  loadMessages: async (
-    conversationId
-  ) => {
+  loadMessages: async (conversationId) => {
     const id = normalizeId(conversationId);
 
-    if (!id) {
-      return [];
-    }
+    if (!id) return [];
 
     set({
       isLoadingMessages: true,
@@ -532,38 +401,28 @@ export const useChatStore = create((set, get) => ({
     });
 
     try {
-      const response =
-        await getConversationMessages({
-          conversationId: id,
+      const response = await getConversationMessages({
+        conversationId: id,
+        limit: MESSAGE_PAGE_SIZE,
+      });
 
-          limit: MESSAGE_PAGE_SIZE,
-        });
-
-      const messages =
-        extractMessages(response);
-
-      const data = unwrapData(response);
+      const messages = extractMessages(response);
+      const pagination = extractPagination(response);
 
       set((state) => ({
         messagesByConversation: {
           ...state.messagesByConversation,
-
           [id]: mergeMessages(
-            state.messagesByConversation[id] ??
-              [],
+            state.messagesByConversation[id] ?? [],
             messages
           ),
         },
 
         messagePagination: {
           ...state.messagePagination,
-
           [id]: {
-            nextCursor:
-              data?.nextCursor ?? null,
-
-            hasMore:
-              Boolean(data?.hasMore),
+            nextCursor: pagination?.nextCursor ?? null,
+            hasMore: Boolean(pagination?.hasMore),
           },
         },
 
@@ -574,9 +433,7 @@ export const useChatStore = create((set, get) => ({
     } catch (error) {
       set({
         isLoadingMessages: false,
-
-        messagesError:
-          getApiErrorMessage(error),
+        messagesError: getApiErrorMessage(error),
       });
 
       return [];
@@ -584,22 +441,14 @@ export const useChatStore = create((set, get) => ({
   },
 
   /**
-   * ========================================================
    * LOAD OLDER MESSAGES
-   * ========================================================
    */
-
-  loadOlderMessages: async (
-    conversationId
-  ) => {
+  loadOlderMessages: async (conversationId) => {
     const id = normalizeId(conversationId);
 
-    if (!id) {
-      return [];
-    }
+    if (!id) return [];
 
-    const pagination =
-      get().messagePagination[id];
+    const pagination = get().messagePagination[id];
 
     if (
       !pagination?.hasMore ||
@@ -614,40 +463,29 @@ export const useChatStore = create((set, get) => ({
     });
 
     try {
-      const response =
-        await getConversationMessages({
-          conversationId: id,
+      const response = await getConversationMessages({
+        conversationId: id,
+        before: pagination.nextCursor,
+        limit: MESSAGE_PAGE_SIZE,
+      });
 
-          before: pagination.nextCursor,
-
-          limit: MESSAGE_PAGE_SIZE,
-        });
-
-      const messages =
-        extractMessages(response);
-
-      const data = unwrapData(response);
+      const messages = extractMessages(response);
+      const nextPagination = extractPagination(response);
 
       set((state) => ({
         messagesByConversation: {
           ...state.messagesByConversation,
-
           [id]: mergeMessages(
-            state.messagesByConversation[id] ??
-              [],
+            state.messagesByConversation[id] ?? [],
             messages
           ),
         },
 
         messagePagination: {
           ...state.messagePagination,
-
           [id]: {
-            nextCursor:
-              data?.nextCursor ?? null,
-
-            hasMore:
-              Boolean(data?.hasMore),
+            nextCursor: nextPagination?.nextCursor ?? null,
+            hasMore: Boolean(nextPagination?.hasMore),
           },
         },
 
@@ -658,9 +496,7 @@ export const useChatStore = create((set, get) => ({
     } catch (error) {
       set({
         isLoadingMessages: false,
-
-        messagesError:
-          getApiErrorMessage(error),
+        messagesError: getApiErrorMessage(error),
       });
 
       return [];
@@ -668,69 +504,49 @@ export const useChatStore = create((set, get) => ({
   },
 
   /**
-   * ========================================================
    * RECEIVE MESSAGE
-   * ========================================================
    */
-
   receiveMessage: (message) => {
-    if (!message) {
-      return;
-    }
+    if (!message) return;
 
     const conversationId = normalizeId(
       message.conversationId
     );
 
-    if (!conversationId) {
-      return;
-    }
+    if (!conversationId) return;
 
     set((state) => ({
       messagesByConversation: {
         ...state.messagesByConversation,
-
         [conversationId]: mergeMessages(
-          state.messagesByConversation[
-            conversationId
-          ] ?? [],
+          state.messagesByConversation[conversationId] ?? [],
           [message]
         ),
       },
 
       conversations: sortConversations(
-        state.conversations.map(
-          (conversation) => {
-            const id = normalizeId(
-              conversation._id ??
-                conversation.id
-            );
+        state.conversations.map((conversation) => {
+          const id = normalizeId(
+            conversation._id ?? conversation.id
+          );
 
-            if (id !== conversationId) {
-              return conversation;
-            }
-
-            return {
-              ...conversation,
-
-              lastMessageId:
-                message._id,
-
-              lastMessageAt:
-                message.createdAt,
-            };
+          if (id !== conversationId) {
+            return conversation;
           }
-        )
+
+          return {
+            ...conversation,
+            lastMessageId: message._id,
+            lastMessageAt: message.createdAt,
+          };
+        })
       ),
     }));
   },
 
   /**
-   * ========================================================
    * SEND TEXT MESSAGE
-   * ========================================================
    */
-
   sendMessage: async ({
     conversationId,
     content,
@@ -748,24 +564,13 @@ export const useChatStore = create((set, get) => ({
       text.length > MAX_MESSAGE_LENGTH
     ) {
       set({
-        sendError:
-          "Enter a valid message before sending.",
+        sendError: "Enter a valid message before sending.",
       });
 
       return null;
     }
 
-    /**
-     * Prevent concurrent sends from this store.
-     */
-
-    if (get().isSendingMessage) {
-      return null;
-    }
-
-    /**
-     * Respect an active REST rate-limit cooldown.
-     */
+    if (get().isSendingMessage) return null;
 
     if (
       get().rateLimitedUntil &&
@@ -779,8 +584,7 @@ export const useChatStore = create((set, get) => ({
       return null;
     }
 
-    const clientMessageId =
-      generateClientMessageId();
+    const clientMessageId = generateClientMessageId();
 
     set({
       isSendingMessage: true,
@@ -790,101 +594,61 @@ export const useChatStore = create((set, get) => ({
     try {
       let message = null;
 
-      /**
-       * Prefer Socket.IO when connected.
-       */
-
       if (
         chatSocket.connected &&
-        useChatSocketStore.getState()
-          .isConnected
+        useChatSocketStore.getState().isConnected
       ) {
-        try {
-          const socketResponse =
-            await new Promise(
-              (resolve, reject) => {
-                chatSocket
-                  .timeout(
-                    SOCKET_ACK_TIMEOUT_MS
-                  )
-                  .emit(
-                    "message:send",
-                    {
-                      conversationId: id,
+        const socketResponse = await new Promise(
+          (resolve, reject) => {
+            chatSocket
+              .timeout(SOCKET_ACK_TIMEOUT_MS)
+              .emit(
+                "message:send",
+                {
+                  conversationId: id,
+                  clientMessageId,
+                  content: text,
+                },
+                (error, response) => {
+                  if (error) {
+                    reject(error);
+                    return;
+                  }
 
-                      clientMessageId,
+                  if (!response?.success) {
+                    const socketError = new Error(
+                      response?.message ||
+                        "Unable to send message."
+                    );
 
-                      content: text,
-                    },
-                    (error, response) => {
-                      if (error) {
-                        reject(error);
-                        return;
-                      }
+                    socketError.code = response?.code;
+                    socketError.retryAfterMs =
+                      response?.retryAfterMs;
 
-                      if (
-                        !response?.success
-                      ) {
-                        const socketError =
-                          new Error(
-                            response?.message ||
-                              "Unable to send message."
-                          );
+                    reject(socketError);
+                    return;
+                  }
 
-                        socketError.code =
-                          response?.code;
+                  resolve(response);
+                }
+              );
+          }
+        );
 
-                        socketError.retryAfterMs =
-                          response?.retryAfterMs;
-
-                        reject(socketError);
-                        return;
-                      }
-
-                      resolve(response);
-                    }
-                  );
-              }
-            );
-
-          message =
-            extractMessage(socketResponse);
-        } catch (socketError) {
-          /**
-           * Do not automatically switch to REST
-           * after a socket timeout.
-           *
-           * The backend might have saved the
-           * message even if the ACK was lost.
-           *
-           * Retrying must reuse the same
-           * clientMessageId.
-           */
-
-          throw socketError;
-        }
+        message = extractMessage(socketResponse);
       } else {
-        /**
-         * REST fallback when Socket.IO
-         * is not connected.
-         */
+        const response = await sendTextMessage({
+          conversationId: id,
+          clientMessageId,
+          content: text,
+        });
 
-        const response =
-          await sendTextMessage({
-            conversationId: id,
-
-            clientMessageId,
-
-            content: text,
-          });
-
-        message =
-          extractMessage(response);
+        message = extractMessage(response);
       }
 
-      if (!message) {
+      if (!message || typeof message !== "object") {
         throw new Error(
-          "The server did not return a message."
+          "The server did not return a valid message."
         );
       }
 
@@ -903,10 +667,7 @@ export const useChatStore = create((set, get) => ({
 
       set({
         isSendingMessage: false,
-
-        sendError:
-          getApiErrorMessage(error),
-
+        sendError: getApiErrorMessage(error),
         rateLimitedUntil:
           retryAfterMs !== null &&
           retryAfterMs !== undefined
@@ -919,19 +680,98 @@ export const useChatStore = create((set, get) => ({
   },
 
   /**
-   * ========================================================
-   * INITIALIZE REAL-TIME MESSAGE LISTENERS
-   * ========================================================
+   * SEND IMAGE MESSAGE
+   *
+   * Sends the image message, then reloads history so
+   * the server can attach authoritative media access data.
    */
+  sendMediaMessage: async ({
+    conversationId,
+    mediaId,
+    content = "",
+  }) => {
+    const id = normalizeId(conversationId);
 
+    const validMediaId =
+      typeof mediaId === "string"
+        ? mediaId.trim()
+        : "";
+
+    const caption =
+      typeof content === "string"
+        ? content.trim()
+        : "";
+
+    if (
+      !id ||
+      !validMediaId ||
+      caption.length > MAX_MESSAGE_LENGTH
+    ) {
+      set({
+        sendError:
+          "Select a valid image before attaching it.",
+      });
+
+      return null;
+    }
+
+    if (get().isSendingMessage) return null;
+
+    set({
+      isSendingMessage: true,
+      sendError: null,
+    });
+
+    try {
+      const response = await sendMediaMessageApi({
+        conversationId: id,
+        mediaId: validMediaId,
+        content: caption,
+        clientMessageId: generateClientMessageId(),
+      });
+
+      const message = extractMessage(response);
+
+      if (!message || typeof message !== "object") {
+        throw new Error(
+          "The server did not return the image message."
+        );
+      }
+
+      get().receiveMessage(message);
+
+      set({
+        isSendingMessage: false,
+        sendError: null,
+      });
+
+      // Refresh to obtain server-calculated:
+      // canAccess, canPurchase, price, status and moderation.
+      await get().loadMessages(id);
+
+      return message;
+    } catch (error) {
+      const retryAfterMs =
+        getRateLimitRetryAfterMs(error);
+
+      set({
+        isSendingMessage: false,
+        sendError: getApiErrorMessage(error),
+        rateLimitedUntil:
+          retryAfterMs !== null &&
+          retryAfterMs !== undefined
+            ? Date.now() + retryAfterMs
+            : null,
+      });
+
+      return null;
+    }
+  },
+
+  /**
+   * INITIALIZE REAL-TIME LISTENERS
+   */
   initializeRealtime: () => {
-    /**
-     * Remove these exact listeners before
-     * registering them again.
-     *
-     * This prevents duplicate message handlers.
-     */
-
     chatSocket.off(
       "message:new",
       handleIncomingMessage
@@ -954,11 +794,8 @@ export const useChatStore = create((set, get) => ({
   },
 
   /**
-   * ========================================================
    * CLEAN UP REAL-TIME LISTENERS
-   * ========================================================
    */
-
   cleanupRealtime: () => {
     chatSocket.off(
       "message:new",
@@ -972,53 +809,32 @@ export const useChatStore = create((set, get) => ({
   },
 
   /**
-   * ========================================================
    * CLEAR ACTIVE CONVERSATION
-   * ========================================================
    */
-
   clearActiveConversation: () => {
-    const previousId =
-      get().activeConversationId;
+    const previousId = get().activeConversationId;
 
-    if (
-      previousId &&
-      chatSocket.connected
-    ) {
-      chatSocket.emit(
-        "conversation:leave",
-        {
-          conversationId: previousId,
-        }
-      );
+    if (previousId && chatSocket.connected) {
+      chatSocket.emit("conversation:leave", {
+        conversationId: previousId,
+      });
     }
 
     set({
       activeConversationId: null,
-
       activeConversation: null,
-
       isLoadingConversation: false,
-
       isLoadingMessages: false,
-
       conversationError: null,
-
       messagesError: null,
     });
   },
 
   /**
-   * ========================================================
-   * CLEAR CHAT STATE
-   * ========================================================
-   *
-   * Call this when the authenticated user logs out.
+   * CLEAR CHAT STATE ON LOGOUT
    */
-
   resetChat: () => {
     get().cleanupRealtime();
-
     get().clearActiveConversation();
 
     set({
@@ -1031,46 +847,36 @@ export const useChatStore = create((set, get) => ({
  * ============================================================
  * SOCKET EVENT HANDLERS
  * ============================================================
- *
- * Defined outside the Zustand store to maintain
- * stable function references.
- */
-
-/**
- * Handle incoming messages.
  */
 
 function handleIncomingMessage(payload) {
   const message = payload?.message;
 
-  if (!message) {
-    return;
+  if (!message) return;
+
+  const store = useChatStore.getState();
+
+  store.receiveMessage(message);
+
+  // Socket messages may contain only the raw message.
+  // Refresh image messages to obtain server authorization
+  // metadata before rendering their image state.
+  if (
+    String(message.type).toUpperCase() === "IMAGE"
+  ) {
+    store.loadMessages(message.conversationId);
   }
-
-  useChatStore
-    .getState()
-    .receiveMessage(message);
 }
-
-/**
- * Rejoin the active conversation after reconnecting.
- */
 
 function handleSocketReconnect() {
   const conversationId =
-    useChatStore.getState()
-      .activeConversationId;
+    useChatStore.getState().activeConversationId;
 
-  if (!conversationId) {
-    return;
-  }
+  if (!conversationId) return;
 
-  chatSocket.emit(
-    "conversation:join",
-    {
-      conversationId,
-    }
-  );
+  chatSocket.emit("conversation:join", {
+    conversationId,
+  });
 }
 
 export default useChatStore;

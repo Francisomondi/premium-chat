@@ -4,10 +4,12 @@ import PaymentTransaction from "../models/PaymentTransaction.model.js";
 
 import MpesaCallbackEvent, {
   MPESA_CALLBACK_EVENT_STATUSES,
+  MPESA_CALLBACK_SETTLEMENT_STATUSES,
 } from "../models/MpesaCallbackEvent.model.js";
 
 import {
   PAYMENT_PROVIDERS,
+  PAYMENT_PURPOSES,
 } from "../constants/payment.constants.js";
 
 import {
@@ -53,10 +55,6 @@ const {
 const validId = (value) =>
   typeof value === "string" &&
   mongoose.isObjectIdOrHexString(value);
-
-const validString = (value) =>
-  typeof value === "string" &&
-  value.trim().length > 0;
 
 const sameId = (left, right) =>
   Boolean(left && right) &&
@@ -201,6 +199,9 @@ const event =
   const paymentId =
     event.paymentId?.toString() || null;
 
+      let queryEvidence = null;
+      let paymentPurpose = null;
+
   /**
    * STEP 2 — FINALIZE USING LEASE TOKEN
    */
@@ -227,49 +228,79 @@ const event =
         )
       : null;
 
+    const updateFields = {
+      status,
+
+      leaseOwner: null,
+
+      leaseExpiresAt: null,
+
+      nextAttemptAt,
+
+      lastErrorCode: reason,
+
+      reconciledAt: reconciled
+        ? completedAt
+        : null,
+
+      manualReviewRequiredAt:
+        requiresManualReview
+          ? completedAt
+          : null,
+
+      manualReviewReason:
+        requiresManualReview
+          ? reason
+          : null,
+    };
+
+    /*
+     * Persist STK Query evidence only when the
+     * reconciliation has successfully completed.
+     */
+
+    if (
+      reconciled &&
+      queryEvidence
+    ) {
+      updateFields.stkQueryEvidence =
+        queryEvidence;
+    }
+        /**
+     * Enqueue only successfully reconciled media purchases.
+     *
+     * Subscription payments remain outside this queue.
+     */
+
+    if (
+      reconciled &&
+      paymentPurpose === PAYMENT_PURPOSES.MEDIA_PURCHASE
+    ) {
+      updateFields.settlementStatus =
+        MPESA_CALLBACK_SETTLEMENT_STATUSES.PENDING;
+
+      updateFields.nextSettlementAttemptAt =
+        completedAt;
+    }
     const update =
       await MpesaCallbackEvent.updateOne(
         {
-        _id: event._id,
+          _id: event._id,
 
-        status: PROCESSING,
+          status: PROCESSING,
 
-        leaseOwner,
+          leaseOwner,
 
-        leaseExpiresAt: {
+          leaseExpiresAt: {
             $gt: completedAt,
-        },
+          },
 
-        hasConflict: false,
+          hasConflict: false,
 
-        manualReviewRequiredAt: null,
+          manualReviewRequiredAt: null,
         },
         {
-          $set: {
-            status,
-
-            leaseOwner: null,
-
-            leaseExpiresAt: null,
-
-            nextAttemptAt,
-
-            lastErrorCode: reason,
-
-            reconciledAt: reconciled
-              ? completedAt
-              : null,
-
-            manualReviewRequiredAt:
-              requiresManualReview
-                ? completedAt
-                : null,
-
-            manualReviewReason:
-              requiresManualReview
-                ? reason
-                : null,
-          },
+          $set: updateFields,
         }
       );
 
@@ -319,6 +350,8 @@ const event =
       });
     }
 
+    paymentPurpose = payment.purpose;
+
     /**
      * STEP 4 — VALIDATE PAYMENT IDENTITY
      */
@@ -367,8 +400,14 @@ const event =
       });
     }
 
-    /**
+     /**
      * STEP 6 — VALIDATE SUCCESS OUTCOME
+     *
+     * The authenticated STK Query must confirm
+     * success for the exact server-stored checkout ID.
+     *
+     * Callback financial fields are not treated
+     * as independent payment verification.
      */
 
     if (
@@ -393,38 +432,38 @@ const event =
       }
 
       /**
-       * STEP 7 — VALIDATE CALLBACK CLAIMS
+       * STEP 7 — RECORD AUTHENTICATED QUERY EVIDENCE
        *
-       * These checks establish consistency,
-       * not independent financial authenticity.
+       * The original server-created payment remains
+       * the source of the expected amount.
+       *
+       * Do not use callback-reported receipt or
+       * amount as independent financial evidence.
        */
 
-      if (
-        !validString(event.reportedReceipt) ||
-        !Number.isSafeInteger(
-          event.reportedAmountMinor
-        ) ||
-        event.reportedAmountMinor !==
-          payment.amountMinor
-      ) {
-        return finalize({
-          status: MANUAL_REVIEW,
+      queryEvidence = {
+        checkoutRequestId:
+          query.checkoutRequestId,
 
-          reason:
-            "CALLBACK_FINANCIAL_DETAILS_INVALID",
+        resultCode:
+          String(query.resultCode),
 
-          requiresManualReview: true,
-        });
-      }
+        resultDescription:
+          query.resultDescription || null,
+
+        authenticatedQuery: true,
+
+        queriedAt: new Date(),
+
+        evidenceReference:
+          `daraja-stk-query:${query.checkoutRequestId}`,
+      };
 
       /**
        * STEP 8 — RECORD RECONCILIATION
        *
-       * RECONCILED means that the checkout
-       * result and stored callback agree.
-       *
-       * It does not mean that independent
-       * financial verification is complete.
+       * This records a confirmed successful
+       * checkout outcome, not financial settlement.
        */
 
       return finalize({

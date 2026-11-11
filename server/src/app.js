@@ -16,6 +16,7 @@ import creatorSubscriberRoutes from "./routes/creatorSubscriber.routes.js";
 import mpesaPaymentRoutes from "./routes/mpesaPayment.routes.js";
 import mpesaCallbackRoutes from "./routes/mpesaCallback.routes.js";
 import paymentAccessRoutes from "./routes/paymentAccess.routes.js";
+import adminMediaModerationRoutes from "./routes/adminMediaModeration.routes.js";
 
 
 
@@ -200,6 +201,19 @@ app.use(
 app.use(
   `${env.API_PREFIX}/admin/creator-profiles`,
   adminCreatorProfileRoutes
+);
+
+
+/**
+ * ADMIN MEDIA MODERATION
+ *
+ * GET   /admin/media
+ * PATCH /admin/media/:mediaId/approve
+ * PATCH /admin/media/:mediaId/reject
+ */
+app.use(
+  `${env.API_PREFIX}/admin`,
+  adminMediaModerationRoutes
 );
 /*
  * ============================================================
