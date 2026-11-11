@@ -351,8 +351,26 @@ export const initiateMpesaStkPush =
         timestamp
       );
 
-    const accessToken =
-      await getMpesaAccessToken();
+   let accessToken;
+
+    try {
+      accessToken = await getMpesaAccessToken();
+    } catch (cause) {
+      /*
+      * OAuth happens before the STK POST.
+      * This invocation has not submitted an STK request.
+      */
+      const error = new Error(
+        "M-Pesa OAuth token acquisition failed."
+      );
+
+      error.code = "MPESA_OAUTH_FAILED";
+      error.stage = "OAUTH";
+      error.requestSubmitted = false;
+      error.cause = cause;
+
+      throw error;
+    }
 
     const payload = {
       BusinessShortCode:

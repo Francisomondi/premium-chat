@@ -30,8 +30,12 @@ const isValidId = (value) =>
  * Atomically:
  * 1. Validates the pending purchase.
  * 2. Validates its linked reserved payment.
- * 3. Creates the unique media dispatch record.
+ * 3. Creates a dispatch record for a first attempt, OR
+ *    reuses the existing dispatch after a confirmed rejection.
  * 4. Claims the payment for processing.
+ *
+ * A previous UNKNOWN, ACCEPTED, DISPATCHING, or other
+ * non-rejected dispatch blocks another attempt.
  *
  * No external provider request occurs here.
  */
@@ -73,28 +77,80 @@ export const authorizeMediaPaymentDispatch = async ({
         );
       }
 
-      const existingDispatch =
+      // A payment attempt must never be dispatched twice.
+      const existingAttemptDispatch =
         await MediaPaymentDispatch.findOne({
-          mediaPurchaseId: purchase._id,
+          paymentId,
         }).session(session);
 
-      if (existingDispatch) {
-        if (
-          existingDispatch.paymentId.toString() !== paymentId ||
-          existingDispatch.buyerId.toString() !== buyerId
-        ) {
-          throw new AppError(
-            "A conflicting dispatch already exists for this purchase.",
-            409,
-            "MEDIA_DISPATCH_CONFLICT"
-          );
-        }
-
+      if (existingAttemptDispatch) {
         throw new AppError(
-          "This media payment has already been authorized or attempted. Check its status before retrying.",
+          "This payment attempt already has a dispatch record.",
           409,
           "MEDIA_DISPATCH_ALREADY_EXISTS"
         );
+      }
+
+      // UNKNOWN, ACCEPTED, DISPATCHING, and other non-rejected
+      // attempts must continue blocking another payment attempt.
+      const blockingDispatch =
+        await MediaPaymentDispatch.findOne({
+          mediaPurchaseId: purchase._id,
+          state: {
+            $ne: MEDIA_DISPATCH_STATES.REJECTED,
+          },
+        }).session(session);
+
+      if (blockingDispatch) {
+        throw new AppError(
+          "A previous payment attempt is still awaiting reconciliation or settlement.",
+          409,
+          "MEDIA_DISPATCH_REQUIRES_RECONCILIATION"
+        );
+      }
+
+      // The unique mediaPurchaseId index means a rejected dispatch
+      // must be reused instead of creating another dispatch record.
+      const previousRejectedDispatch =
+        await MediaPaymentDispatch.findOne({
+          mediaPurchaseId: purchase._id,
+          state: MEDIA_DISPATCH_STATES.REJECTED,
+        }).session(session);
+
+      if (previousRejectedDispatch) {
+        if (
+          previousRejectedDispatch.requiresManualReview !== false ||
+          !isValidId(previousRejectedDispatch.paymentId)
+        ) {
+          throw new AppError(
+            "The previous payment attempt is not eligible for automatic retry.",
+            409,
+            "MEDIA_PREVIOUS_ATTEMPT_NOT_RETRYABLE"
+          );
+        }
+
+        const previousPayment =
+          await PaymentTransaction.findOne({
+            _id: previousRejectedDispatch.paymentId,
+            payerId: purchase.buyerId,
+            creatorId: purchase.creatorId,
+            purpose: PAYMENT_PURPOSES.MEDIA_PURCHASE,
+            subscriptionId: null,
+            provider: PAYMENT_PROVIDERS.MPESA,
+            status: PAYMENT_STATUSES.FAILED,
+            verificationStatus:
+              PAYMENT_VERIFICATION_STATUSES.UNVERIFIED,
+            initiationStatus:
+              PAYMENT_INITIATION_STATUSES.REJECTED,
+          }).session(session);
+
+        if (!previousPayment) {
+          throw new AppError(
+            "The previous payment does not have a confirmed safe-retry state.",
+            409,
+            "MEDIA_PREVIOUS_PAYMENT_NOT_RETRYABLE"
+          );
+        }
       }
 
       const payment = await PaymentTransaction.findOne({
@@ -123,18 +179,54 @@ export const authorizeMediaPaymentDispatch = async ({
 
       const now = new Date();
 
-      await MediaPaymentDispatch.create(
-        [
-          {
-            mediaPurchaseId: purchase._id,
-            paymentId: payment._id,
-            buyerId: purchase.buyerId,
-            state: MEDIA_DISPATCH_STATES.AUTHORIZED,
-            authorizedAt: now,
-          },
-        ],
-        { session }
-      );
+      if (previousRejectedDispatch) {
+        // Reuse the existing dispatch document. The previous
+        // PaymentTransaction remains FAILED for audit purposes.
+        const dispatchUpdate =
+          await MediaPaymentDispatch.updateOne(
+            {
+              _id: previousRejectedDispatch._id,
+              mediaPurchaseId: purchase._id,
+              paymentId: previousRejectedDispatch.paymentId,
+              state: MEDIA_DISPATCH_STATES.REJECTED,
+              requiresManualReview: false,
+            },
+            {
+              $set: {
+                paymentId: payment._id,
+                buyerId: purchase.buyerId,
+                state: MEDIA_DISPATCH_STATES.AUTHORIZED,
+                authorizedAt: now,
+                dispatchStartedAt: null,
+                dispatchCompletedAt: null,
+                requiresManualReview: false,
+                manualReviewReason: null,
+              },
+            },
+            { session }
+          );
+
+        if (dispatchUpdate.modifiedCount !== 1) {
+          throw new AppError(
+            "The rejected dispatch could not be safely reused.",
+            409,
+            "MEDIA_DISPATCH_REUSE_CONFLICT"
+          );
+        }
+      } else {
+        await MediaPaymentDispatch.create(
+          [
+            {
+              mediaPurchaseId: purchase._id,
+              paymentId: payment._id,
+              buyerId: purchase.buyerId,
+              state: MEDIA_DISPATCH_STATES.AUTHORIZED,
+              authorizedAt: now,
+            },
+          ],
+          { session }
+        );
+      }
 
       const paymentUpdate =
         await PaymentTransaction.updateOne(
@@ -172,6 +264,9 @@ export const authorizeMediaPaymentDispatch = async ({
         authorized: true,
         paymentId: payment._id.toString(),
         purchaseId: purchase._id.toString(),
+        reusedRejectedDispatch: Boolean(
+          previousRejectedDispatch
+        ),
       };
     });
 
@@ -281,11 +376,17 @@ export const markMediaPaymentDispatchStarted = async ({
 /**
  * RECORD MEDIA PAYMENT DISPATCH OUTCOME
  *
- * ACCEPTED means Daraja accepted the STK request.
- * It does NOT mean the payment succeeded.
+ * ACCEPTED:
+ * Daraja accepted the STK request. This is NOT payment success.
+ *
+ * UNKNOWN:
+ * The outcome could not be confirmed. Manual reconciliation is
+ * required, and another attempt is blocked.
+ *
+ * REJECTED:
+ * Only permitted when there is confirmed evidence that the STK
+ * request was never submitted to Daraja.
  */
-
-
 export const recordMediaPaymentDispatchOutcome = async ({
   paymentId,
   state,
@@ -293,6 +394,7 @@ export const recordMediaPaymentDispatchOutcome = async ({
   manualReviewReason = null,
   checkoutRequestId = null,
   merchantRequestId = null,
+  confirmedNotSubmitted = false,
 }) => {
   if (!isValidId(paymentId)) {
     throw new AppError(
@@ -305,11 +407,12 @@ export const recordMediaPaymentDispatchOutcome = async ({
   const allowedStates = [
     MEDIA_DISPATCH_STATES.ACCEPTED,
     MEDIA_DISPATCH_STATES.UNKNOWN,
+    MEDIA_DISPATCH_STATES.REJECTED,
   ];
 
   if (!allowedStates.includes(state)) {
     throw new AppError(
-      "Only ACCEPTED and UNKNOWN outcomes are supported by this initiation flow.",
+      "Unsupported media payment dispatch outcome.",
       400,
       "INVALID_MEDIA_DISPATCH_OUTCOME"
     );
@@ -333,10 +436,13 @@ export const recordMediaPaymentDispatchOutcome = async ({
     if (
       requiresManualReview !== true ||
       typeof manualReviewReason !== "string" ||
-      !manualReviewReason.trim()
+      !manualReviewReason.trim() ||
+      checkoutRequestId !== null ||
+      merchantRequestId !== null ||
+      confirmedNotSubmitted !== false
     ) {
       throw new AppError(
-        "Unknown dispatch outcomes require manual review and a reason.",
+        "Unknown dispatch outcomes require manual review and cannot contain provider identifiers.",
         400,
         "UNKNOWN_OUTCOME_REQUIRES_REVIEW"
       );
@@ -346,10 +452,11 @@ export const recordMediaPaymentDispatchOutcome = async ({
   if (state === MEDIA_DISPATCH_STATES.ACCEPTED) {
     if (
       requiresManualReview !== false ||
-      manualReviewReason !== null
+      manualReviewReason !== null ||
+      confirmedNotSubmitted !== false
     ) {
       throw new AppError(
-        "Accepted dispatches cannot carry unknown-outcome review details.",
+        "Accepted dispatches cannot carry rejection or unknown-outcome details.",
         400,
         "INVALID_ACCEPTED_REVIEW_STATE"
       );
@@ -371,15 +478,20 @@ export const recordMediaPaymentDispatchOutcome = async ({
     }
   }
 
-  if (
-    state === MEDIA_DISPATCH_STATES.UNKNOWN &&
-    (checkoutRequestId !== null || merchantRequestId !== null)
-  ) {
-    throw new AppError(
-      "Unknown dispatches cannot record provider identifiers through this flow.",
-      400,
-      "UNEXPECTED_MPESA_PROVIDER_IDENTIFIERS"
-    );
+  if (state === MEDIA_DISPATCH_STATES.REJECTED) {
+    if (
+      confirmedNotSubmitted !== true ||
+      requiresManualReview !== false ||
+      manualReviewReason !== null ||
+      checkoutRequestId !== null ||
+      merchantRequestId !== null
+    ) {
+      throw new AppError(
+        "REJECTED requires confirmed evidence that no STK request was submitted.",
+        400,
+        "INVALID_CONFIRMED_REJECTION"
+      );
+    }
   }
 
   const session = await mongoose.startSession();
@@ -408,8 +520,10 @@ export const recordMediaPaymentDispatchOutcome = async ({
         subscriptionId: null,
         provider: PAYMENT_PROVIDERS.MPESA,
         status: PAYMENT_STATUSES.PROCESSING,
-        initiationStatus: PAYMENT_INITIATION_STATUSES.DISPATCHING,
-        verificationStatus: PAYMENT_VERIFICATION_STATUSES.UNVERIFIED,
+        initiationStatus:
+          PAYMENT_INITIATION_STATUSES.DISPATCHING,
+        verificationStatus:
+          PAYMENT_VERIFICATION_STATUSES.UNVERIFIED,
       }).session(session);
 
       if (!payment) {
@@ -425,24 +539,29 @@ export const recordMediaPaymentDispatchOutcome = async ({
       const paymentInitiationStatus =
         state === MEDIA_DISPATCH_STATES.ACCEPTED
           ? PAYMENT_INITIATION_STATUSES.ACCEPTED
-          : PAYMENT_INITIATION_STATUSES.UNKNOWN;
+          : state === MEDIA_DISPATCH_STATES.REJECTED
+            ? PAYMENT_INITIATION_STATUSES.REJECTED
+            : PAYMENT_INITIATION_STATUSES.UNKNOWN;
+
+      const dispatchChanges = {
+        state,
+        dispatchCompletedAt: now,
+        requiresManualReview,
+        manualReviewReason:
+          state === MEDIA_DISPATCH_STATES.UNKNOWN
+            ? manualReviewReason.trim()
+            : null,
+      };
 
       const dispatchUpdate =
         await MediaPaymentDispatch.updateOne(
           {
             _id: dispatch._id,
+            paymentId,
             state: MEDIA_DISPATCH_STATES.DISPATCHING,
           },
           {
-            $set: {
-              state,
-              dispatchCompletedAt: now,
-              requiresManualReview,
-              manualReviewReason:
-                state === MEDIA_DISPATCH_STATES.UNKNOWN
-                  ? manualReviewReason.trim()
-                  : null,
-            },
+            $set: dispatchChanges,
           },
           { session }
         );
@@ -458,6 +577,14 @@ export const recordMediaPaymentDispatchOutcome = async ({
       const paymentChanges = {
         initiationStatus: paymentInitiationStatus,
       };
+
+      if (state === MEDIA_DISPATCH_STATES.REJECTED) {
+        // A confirmed pre-submission rejection is a failed
+        // initiation, not a verified financial transaction.
+        paymentChanges.status = PAYMENT_STATUSES.FAILED;
+        paymentChanges.initiationErrorCode =
+          "MPESA_OAUTH_FAILED";
+      }
 
       if (state === MEDIA_DISPATCH_STATES.ACCEPTED) {
         paymentChanges.providerTransactionId =
@@ -475,8 +602,10 @@ export const recordMediaPaymentDispatchOutcome = async ({
           {
             _id: payment._id,
             status: PAYMENT_STATUSES.PROCESSING,
-            initiationStatus: PAYMENT_INITIATION_STATUSES.DISPATCHING,
-            verificationStatus: PAYMENT_VERIFICATION_STATUSES.UNVERIFIED,
+            initiationStatus:
+              PAYMENT_INITIATION_STATUSES.DISPATCHING,
+            verificationStatus:
+              PAYMENT_VERIFICATION_STATUSES.UNVERIFIED,
           },
           {
             $set: paymentChanges,
@@ -508,5 +637,3 @@ export const recordMediaPaymentDispatchOutcome = async ({
     await session.endSession();
   }
 };
-
-

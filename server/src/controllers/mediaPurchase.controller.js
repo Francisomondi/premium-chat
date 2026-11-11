@@ -1,4 +1,6 @@
 
+import { createHash } from "node:crypto";
+
 import AppError from "../utils/AppError.js";
 
 import {
@@ -32,10 +34,23 @@ export const createMediaPurchaseController = async (
       );
     }
 
+    if (
+      typeof clientRequestId !== "string" ||
+      !/^[A-Za-z0-9_-]{8,128}$/.test(clientRequestId.trim())
+    ) {
+      throw new AppError(
+        "A valid client request ID is required.",
+        400,
+        "INVALID_CLIENT_REQUEST_ID"
+      );
+    }
+
+    const normalizedRequestId = clientRequestId.trim();
+
     const reservation = await reserveMediaPurchase({
       buyerId: buyerId.toString(),
       mediaId,
-      clientRequestId,
+      clientRequestId: normalizedRequestId,
     });
 
     const purchase = reservation?.purchase;
@@ -70,14 +85,22 @@ export const createMediaPurchaseController = async (
     }
 
     /*
-     * Use the purchase ID as the stable payment idempotency key.
+     * Payment idempotency:
      *
-     * Browser retries may have different clientRequestIds, but
-     * the same pending purchase must always resolve to the same
-     * PaymentTransaction.
+     * - The same clientRequestId always produces the same key.
+     * - A new clientRequestId produces a new key.
+     * - The initiation service decides whether a new attempt
+     *   is permitted based on the previous dispatch outcome.
+     *
+     * In particular, UNKNOWN attempts must remain blocked.
      */
+    const requestFingerprint = createHash("sha256")
+      .update(normalizedRequestId)
+      .digest("hex")
+      .slice(0, 16);
+
     const paymentClientRequestId =
-      `media_${purchase._id.toString()}`;
+      `media_${purchase._id.toString()}_${requestFingerprint}`;
 
     const paymentResult = await initiateMediaMpesaPayment({
       buyerId: buyerId.toString(),

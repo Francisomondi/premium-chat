@@ -75,13 +75,16 @@ const mediaPaymentDispatchSchema = new mongoose.Schema(
 );
 
 /**
- * One dispatch record per media purchase.
+ * Dispatch history for a media purchase.
+ *
+ * Multiple attempts are permitted, but the service
+ * prevents another attempt while an earlier attempt
+ * is not definitively REJECTED.
  */
 mediaPaymentDispatchSchema.index(
-  { mediaPurchaseId: 1 },
+  { mediaPurchaseId: 1, createdAt: -1 },
   {
-    unique: true,
-    name: "unique_media_purchase_dispatch",
+    name: "media_purchase_dispatch_history",
   }
 );
 
