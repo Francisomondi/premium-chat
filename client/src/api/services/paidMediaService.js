@@ -295,6 +295,43 @@ export const purchaseMedia = async ({
   return response.data;
 };
 
+
+/**
+ * ============================================================
+ * REFRESH PAID-MEDIA PURCHASE STATUS
+ * ============================================================
+ *
+ * The backend:
+ * - Checks purchase ownership.
+ * - Checks for a correlated M-Pesa callback.
+ * - Performs Daraja STK Query when appropriate.
+ * - Activates media access only after financial verification.
+ *
+ * This endpoint NEVER initiates another STK Push.
+ */
+export const getMediaPurchaseStatus = async (
+  purchaseId,
+  options = {}
+) => {
+  if (
+    typeof purchaseId !== "string" ||
+    !purchaseId.trim()
+  ) {
+    throw new Error("A valid media purchase ID is required.");
+  }
+
+  const response = await api.get(
+    `/media/purchases/${encodeURIComponent(
+      purchaseId.trim()
+    )}/status`,
+    {
+      signal: options.signal,
+    }
+  );
+
+  return response.data;
+};
+
 export default {
   createMediaUploadIntent,
   uploadMediaFile,
@@ -302,4 +339,5 @@ export default {
   getMediaAccess,
   purchaseMedia,
   getMediaPreview,
+  getMediaPurchaseStatus,
 };

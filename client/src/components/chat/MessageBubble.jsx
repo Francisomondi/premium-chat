@@ -12,6 +12,7 @@ import {
   getMediaAccess,
   getMediaPreview,
   purchaseMedia,
+  getMediaPurchaseStatus,
 } from "../../api/services/paidMediaService.js";
 
 import { useChatStore } from "../../store/useChatStore.js";
@@ -109,12 +110,19 @@ function MessageStatus({ status }) {
  * ============================================================
  */
 
+
 function MediaPurchaseForm({ mediaId }) {
   const [phoneNumber, setPhoneNumber] = useState("");
   const [requestId, setRequestId] = useState("");
   const [purchasing, setPurchasing] = useState(false);
   const [purchaseResult, setPurchaseResult] = useState(null);
   const [error, setError] = useState("");
+
+  const [refreshingAccess, setRefreshingAccess] =
+    useState(false);
+
+  const [refreshMessage, setRefreshMessage] =
+    useState("");
 
   const loadMessages = useChatStore(
     (state) => state.loadMessages
@@ -124,35 +132,105 @@ function MediaPurchaseForm({ mediaId }) {
     (state) => state.activeConversationId
   );
 
-  const [refreshingAccess, setRefreshingAccess] =
-    useState(false);
-
-  const [refreshMessage, setRefreshMessage] =
-    useState("");
-
+  /**
+   * REFRESH PAYMENT STATUS
+   *
+   * First asks the backend to verify the purchase.
+   * Then reloads chat messages so the server's updated
+   * media authorization is reflected in the conversation.
+   */
   const handleRefreshAccess = async () => {
-    if (refreshingAccess || !activeConversationId) {
+    if (
+      refreshingAccess ||
+      !purchaseResult?.purchaseId
+    ) {
       return;
     }
 
     setRefreshingAccess(true);
     setRefreshMessage("");
+    setError("");
 
     try {
-      await loadMessages(activeConversationId);
+      const response = await getMediaPurchaseStatus(
+        purchaseResult.purchaseId
+      );
+
+      if (response?.success !== true || !response?.data) {
+        throw new Error(
+          response?.message ||
+            "Unable to retrieve payment status."
+        );
+      }
+
+      const status = response.data;
+
+      setPurchaseResult((previous) => ({
+        ...previous,
+        status: status.paymentStatus,
+        verificationStatus: status.verificationStatus,
+        initiationStatus:
+          status.initiationStatus ??
+          previous?.initiationStatus,
+        paymentVerified: status.paymentVerified === true,
+        mediaAccessGranted:
+          status.mediaAccessGranted === true,
+      }));
+
+      /*
+       * Refresh chat history after the backend status check.
+       * This is what updates message.media.canAccess.
+       */
+      if (activeConversationId) {
+        await loadMessages(activeConversationId);
+      }
+
+      if (status.mediaAccessGranted === true) {
+        setRefreshMessage(
+          "Payment verified successfully. Your media access has been activated."
+        );
+
+        return;
+      }
+
+      if (
+        status.paymentStatus === "FAILED" ||
+        status.verificationStatus === "REJECTED"
+      ) {
+        setRefreshMessage(
+          "This payment was not verified. Media access remains locked."
+        );
+
+        return;
+      }
+
+      if (
+        status.initiationStatus === "UNKNOWN"
+      ) {
+        setRefreshMessage(
+          "The payment outcome is still uncertain. Please wait for reconciliation. Do not initiate another payment."
+        );
+
+        return;
+      }
 
       setRefreshMessage(
-        "Access checked. If payment has been verified, the media will unlock."
+        "Payment is not yet verified. Complete the M-Pesa prompt if it is still active, then check again."
       );
-    } catch {
+    } catch (requestError) {
       setRefreshMessage(
-        "Unable to refresh access. Please try again."
+        requestError?.response?.data?.message ||
+          requestError?.message ||
+          "Unable to refresh payment status. Please try again."
       );
     } finally {
       setRefreshingAccess(false);
     }
   };
 
+  /**
+   * INITIATE M-PESA PURCHASE
+   */
   const handlePurchase = async (event) => {
     event.preventDefault();
 
@@ -161,14 +239,16 @@ function MediaPurchaseForm({ mediaId }) {
     const normalizedPhone = phoneNumber.trim();
 
     if (!/^(?:254|0)?7\d{8}$/.test(normalizedPhone)) {
-      setError("Enter a valid Kenyan M-Pesa phone number.");
+      setError(
+        "Enter a valid Kenyan M-Pesa phone number."
+      );
       return;
     }
 
     /*
-     * Keep the same identifier for retries.
-     * This prevents duplicate purchase attempts after
-     * an uncertain network response.
+     * Preserve the same request ID across retries.
+     * Never generate a new ID just because a request
+     * returned an uncertain network result.
      */
     const currentRequestId =
       requestId || generatePurchaseRequestId();
@@ -195,10 +275,6 @@ function MediaPurchaseForm({ mediaId }) {
         );
       }
 
-      /*
-       * The backend returns the payment result directly
-       * inside response.data, not response.data.payment.
-       */
       const payment = response?.data;
 
       if (
@@ -213,7 +289,7 @@ function MediaPurchaseForm({ mediaId }) {
       setPurchaseResult(payment);
 
       setRefreshMessage(
-        "Payment request received. Complete the M-Pesa prompt, then refresh access."
+        "Payment request received. Complete the M-Pesa prompt. Once Safaricom sends the callback, refresh payment status."
       );
     } catch (requestError) {
       if (
@@ -235,16 +311,16 @@ function MediaPurchaseForm({ mediaId }) {
     }
 
     /*
-     * Refreshing chat history is separate from payment
-     * initiation. A refresh failure must not make a
-     * successful STK initiation appear unsuccessful.
+     * Refreshing chat history is independent of STK initiation.
+     * A refresh failure must not turn an accepted STK request
+     * into an apparent failed purchase.
      */
     if (activeConversationId) {
       try {
         await loadMessages(activeConversationId);
       } catch {
         setRefreshMessage(
-          "Payment request received. Complete the M-Pesa prompt. You can refresh access afterward."
+          "Payment request received. Complete the M-Pesa prompt. You can refresh payment status afterward."
         );
       }
     }
@@ -275,19 +351,23 @@ function MediaPurchaseForm({ mediaId }) {
         <div className="space-y-3">
           <div className="rounded-lg border border-white/10 bg-white/5 p-3">
             <p className="text-sm font-semibold text-white">
-              {initiationStatus === "ACCEPTED"
-                ? "M-Pesa request accepted"
-                : initiationStatus === "UNKNOWN"
-                  ? "Payment requires confirmation"
-                  : "Payment request recorded"}
+              {purchaseResult.mediaAccessGranted
+                ? "Payment verified"
+                : initiationStatus === "ACCEPTED"
+                  ? "M-Pesa request accepted"
+                  : initiationStatus === "UNKNOWN"
+                    ? "Payment requires confirmation"
+                    : "Payment request recorded"}
             </p>
 
             <p className="mt-1 text-xs leading-5 text-slate-400">
-              {initiationStatus === "ACCEPTED"
-                ? "Check your phone and enter your M-Pesa PIN to complete the payment."
-                : initiationStatus === "UNKNOWN"
-                  ? "The payment outcome is uncertain. Wait for backend reconciliation before attempting another payment."
-                  : "Your payment request has been recorded. Media access remains locked until payment verification."}
+              {purchaseResult.mediaAccessGranted
+                ? "Your payment has been verified and media access has been activated."
+                : initiationStatus === "ACCEPTED"
+                  ? "Check your phone and enter your M-Pesa PIN to complete the payment."
+                  : initiationStatus === "UNKNOWN"
+                    ? "The payment outcome is uncertain. Wait for backend reconciliation before attempting another payment."
+                    : "Your payment request has been recorded. Media access remains locked until payment verification."}
             </p>
           </div>
 
@@ -300,41 +380,51 @@ function MediaPurchaseForm({ mediaId }) {
             </p>
 
             <p>
+              Verification:{" "}
+              <span className="font-semibold text-white">
+                {purchaseResult.verificationStatus ||
+                  "UNVERIFIED"}
+              </span>
+            </p>
+
+            <p>
               Initiation:{" "}
               <span className="font-semibold text-white">
-                {purchaseResult.initiationStatus || "PROCESSING"}
+                {purchaseResult.initiationStatus ||
+                  "PROCESSING"}
               </span>
             </p>
           </div>
 
-          <p className="text-xs leading-5 text-amber-200/80">
-            Your media will unlock only after the server verifies and settles your payment.
-          </p>
+          {!purchaseResult.mediaAccessGranted && (
+            <p className="text-xs leading-5 text-amber-200/80">
+              Your media will unlock only after the server verifies and settles your payment.
+            </p>
+          )}
 
-          <button
-            type="button"
-            onClick={handleRefreshAccess}
-            disabled={
-              refreshingAccess ||
-              !activeConversationId
-            }
-            className="flex w-full items-center justify-center gap-2 rounded-lg border border-amber-400/30 bg-amber-500/10 px-4 py-2.5 text-sm font-semibold text-amber-200 transition hover:bg-amber-500/20 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {refreshingAccess ? (
-              <>
-                <Loader2
-                  size={15}
-                  className="animate-spin"
-                />
-                Checking access...
-              </>
-            ) : (
-              <>
-                <RefreshCw size={15} />
-                Refresh access
-              </>
-            )}
-          </button>
+          {!purchaseResult.mediaAccessGranted && (
+            <button
+              type="button"
+              onClick={handleRefreshAccess}
+              disabled={refreshingAccess}
+              className="flex w-full items-center justify-center gap-2 rounded-lg border border-amber-400/30 bg-amber-500/10 px-4 py-2.5 text-sm font-semibold text-amber-200 transition hover:bg-amber-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {refreshingAccess ? (
+                <>
+                  <Loader2
+                    size={15}
+                    className="animate-spin"
+                  />
+                  Checking payment...
+                </>
+              ) : (
+                <>
+                  <RefreshCw size={15} />
+                  Check payment and refresh access
+                </>
+              )}
+            </button>
+          )}
 
           {refreshMessage && (
             <p
@@ -415,6 +505,7 @@ function MediaPurchaseForm({ mediaId }) {
     </div>
   );
 }
+
 
 /**
  * ============================================================

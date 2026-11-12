@@ -39,6 +39,7 @@ const isValidId = (value) =>
  *
  * No external provider request occurs here.
  */
+
 export const authorizeMediaPaymentDispatch = async ({
   buyerId,
   purchaseId,
@@ -77,7 +78,7 @@ export const authorizeMediaPaymentDispatch = async ({
         );
       }
 
-      // A payment attempt must never be dispatched twice.
+      // Never dispatch the same payment twice.
       const existingAttemptDispatch =
         await MediaPaymentDispatch.findOne({
           paymentId,
@@ -91,47 +92,30 @@ export const authorizeMediaPaymentDispatch = async ({
         );
       }
 
-      // UNKNOWN, ACCEPTED, DISPATCHING, and other non-rejected
-      // attempts must continue blocking another payment attempt.
-      const blockingDispatch =
-        await MediaPaymentDispatch.findOne({
+      // Retrieve the complete dispatch history.
+      const previousDispatches =
+        await MediaPaymentDispatch.find({
           mediaPurchaseId: purchase._id,
-          state: {
-            $ne: MEDIA_DISPATCH_STATES.REJECTED,
-          },
         }).session(session);
 
-      if (blockingDispatch) {
-        throw new AppError(
-          "A previous payment attempt is still awaiting reconciliation or settlement.",
-          409,
-          "MEDIA_DISPATCH_REQUIRES_RECONCILIATION"
-        );
-      }
-
-      // The unique mediaPurchaseId index means a rejected dispatch
-      // must be reused instead of creating another dispatch record.
-      const previousRejectedDispatch =
-        await MediaPaymentDispatch.findOne({
-          mediaPurchaseId: purchase._id,
-          state: MEDIA_DISPATCH_STATES.REJECTED,
-        }).session(session);
-
-      if (previousRejectedDispatch) {
+      // Every previous attempt must be definitively rejected.
+      for (const previousDispatch of previousDispatches) {
         if (
-          previousRejectedDispatch.requiresManualReview !== false ||
-          !isValidId(previousRejectedDispatch.paymentId)
+          previousDispatch.state !==
+            MEDIA_DISPATCH_STATES.REJECTED ||
+          previousDispatch.requiresManualReview !== false ||
+          !isValidId(previousDispatch.paymentId)
         ) {
           throw new AppError(
-            "The previous payment attempt is not eligible for automatic retry.",
+            "A previous payment attempt requires reconciliation.",
             409,
-            "MEDIA_PREVIOUS_ATTEMPT_NOT_RETRYABLE"
+            "MEDIA_DISPATCH_REQUIRES_RECONCILIATION"
           );
         }
 
         const previousPayment =
           await PaymentTransaction.findOne({
-            _id: previousRejectedDispatch.paymentId,
+            _id: previousDispatch.paymentId,
             payerId: purchase.buyerId,
             creatorId: purchase.creatorId,
             purpose: PAYMENT_PURPOSES.MEDIA_PURCHASE,
@@ -146,13 +130,14 @@ export const authorizeMediaPaymentDispatch = async ({
 
         if (!previousPayment) {
           throw new AppError(
-            "The previous payment does not have a confirmed safe-retry state.",
+            "A previous payment does not have a confirmed safe-retry state.",
             409,
             "MEDIA_PREVIOUS_PAYMENT_NOT_RETRYABLE"
           );
         }
       }
 
+      // Validate the new reserved payment.
       const payment = await PaymentTransaction.findOne({
         _id: paymentId,
         payerId: buyerId,
@@ -179,55 +164,22 @@ export const authorizeMediaPaymentDispatch = async ({
 
       const now = new Date();
 
-      if (previousRejectedDispatch) {
-        // Reuse the existing dispatch document. The previous
-        // PaymentTransaction remains FAILED for audit purposes.
-        const dispatchUpdate =
-          await MediaPaymentDispatch.updateOne(
-            {
-              _id: previousRejectedDispatch._id,
-              mediaPurchaseId: purchase._id,
-              paymentId: previousRejectedDispatch.paymentId,
-              state: MEDIA_DISPATCH_STATES.REJECTED,
-              requiresManualReview: false,
-            },
-            {
-              $set: {
-                paymentId: payment._id,
-                buyerId: purchase.buyerId,
-                state: MEDIA_DISPATCH_STATES.AUTHORIZED,
-                authorizedAt: now,
-                dispatchStartedAt: null,
-                dispatchCompletedAt: null,
-                requiresManualReview: false,
-                manualReviewReason: null,
-              },
-            },
-            { session }
-          );
+      // Create a NEW immutable dispatch record.
+      // Never reuse or modify a previous dispatch.
+      await MediaPaymentDispatch.create(
+        [
+          {
+            mediaPurchaseId: purchase._id,
+            paymentId: payment._id,
+            buyerId: purchase.buyerId,
+            state: MEDIA_DISPATCH_STATES.AUTHORIZED,
+            authorizedAt: now,
+          },
+        ],
+        { session }
+      );
 
-        if (dispatchUpdate.modifiedCount !== 1) {
-          throw new AppError(
-            "The rejected dispatch could not be safely reused.",
-            409,
-            "MEDIA_DISPATCH_REUSE_CONFLICT"
-          );
-        }
-      } else {
-        await MediaPaymentDispatch.create(
-          [
-            {
-              mediaPurchaseId: purchase._id,
-              paymentId: payment._id,
-              buyerId: purchase.buyerId,
-              state: MEDIA_DISPATCH_STATES.AUTHORIZED,
-              authorizedAt: now,
-            },
-          ],
-          { session }
-        );
-      }
-
+      // Atomically claim this payment.
       const paymentUpdate =
         await PaymentTransaction.updateOne(
           {
@@ -264,9 +216,7 @@ export const authorizeMediaPaymentDispatch = async ({
         authorized: true,
         paymentId: payment._id.toString(),
         purchaseId: purchase._id.toString(),
-        reusedRejectedDispatch: Boolean(
-          previousRejectedDispatch
-        ),
+        previousDispatchCount: previousDispatches.length,
       };
     });
 

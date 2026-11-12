@@ -3,11 +3,6 @@ import mongoose from "mongoose";
 
 import User from "../models/User.model.js";
 import MediaPurchase from "../models/MediaPurchase.model.js";
-
-import MediaPaymentDispatch, {
-  MEDIA_DISPATCH_STATES,
-} from "../models/MediaPaymentDispatch.model.js";
-
 import PaymentTransaction from "../models/PaymentTransaction.model.js";
 
 import {
@@ -35,20 +30,21 @@ import {
   linkMediaPurchasePayment,
 } from "./mediaPurchase.service.js";
 
-import {
-  authorizeMediaPaymentDispatch,
-  markMediaPaymentDispatchStarted,
-  recordMediaPaymentDispatchOutcome,
-} from "./mediaPaymentDispatch.service.js";
-
 import AppError from "../utils/AppError.js";
 
-const createError = (message, statusCode = 400) =>
-  new AppError(message, statusCode);
+const createError = (
+  message,
+  statusCode = 400,
+  code = "MEDIA_PAYMENT_ERROR"
+) => new AppError(message, statusCode, code);
 
 const validateObjectId = (value, fieldName) => {
   if (!mongoose.isObjectIdOrHexString(value)) {
-    throw createError(`Invalid ${fieldName}.`, 400);
+    throw createError(
+      `Invalid ${fieldName}.`,
+      400,
+      "INVALID_IDENTIFIER"
+    );
   }
 };
 
@@ -57,97 +53,137 @@ const validateClientRequestId = (value) => {
     typeof value !== "string" ||
     !/^[A-Za-z0-9_-]{8,128}$/.test(value.trim())
   ) {
-    throw createError("Invalid client request ID.", 400);
+    throw createError(
+      "Invalid client request ID.",
+      400,
+      "INVALID_CLIENT_REQUEST_ID"
+    );
   }
 
   return value.trim();
 };
 
-const formatResult = (payment, extra = {}) => {
+const formatResult = (payment, purchaseId) => {
   let message = "Payment is being prepared.";
 
   if (
     payment.initiationStatus ===
-    PAYMENT_INITIATION_STATUSES.REJECTED
+    PAYMENT_INITIATION_STATUSES.RESERVED
   ) {
     message =
-      "M-Pesa authorization failed before the STK request was submitted. You can start a new payment attempt.";
+      "Your payment request is reserved and has not yet been submitted.";
   } else if (
     payment.initiationStatus ===
-    PAYMENT_INITIATION_STATUSES.UNKNOWN
+    PAYMENT_INITIATION_STATUSES.DISPATCHING
   ) {
     message =
-      "The M-Pesa request outcome could not be confirmed. Do not retry until the payment is reconciled.";
+      "Your M-Pesa request is being submitted. Do not initiate another payment.";
   } else if (
     payment.initiationStatus ===
     PAYMENT_INITIATION_STATUSES.ACCEPTED
   ) {
     message =
-      "M-Pesa accepted the request. Check your phone for the payment prompt.";
+      "Safaricom accepted the STK request. Check your phone for the payment prompt.";
   } else if (
-    payment.status === PAYMENT_STATUSES.FAILED
+    payment.initiationStatus ===
+    PAYMENT_INITIATION_STATUSES.UNKNOWN
   ) {
     message =
-      "This payment attempt failed. Start a new payment attempt if it was confirmed not submitted.";
+      "The M-Pesa request outcome is uncertain. Do not retry this payment.";
+  } else if (
+    payment.initiationStatus ===
+    PAYMENT_INITIATION_STATUSES.REJECTED
+  ) {
+    message =
+      "The STK request was rejected before submission. This payment attempt cannot be reused.";
   } else if (
     payment.status === PAYMENT_STATUSES.PROCESSING
   ) {
     message =
-      "Your payment request is being processed. Check your payment status before trying again.";
+      "Your payment is being processed. Check its status before trying again.";
+  } else if (
+    payment.status === PAYMENT_STATUSES.SUCCEEDED &&
+    payment.verificationStatus ===
+      PAYMENT_VERIFICATION_STATUSES.VERIFIED
+  ) {
+    message = "Your payment has been verified.";
   }
 
   return {
     paymentId: payment._id.toString(),
-    purchaseId: extra.purchaseId ?? null,
+    purchaseId: purchaseId.toString(),
     status: payment.status,
     initiationStatus: payment.initiationStatus,
     amountMinor: payment.amountMinor,
     currency: payment.currency,
     checkoutRequestId: payment.providerTransactionId ?? null,
-    paymentVerified: false,
-    mediaAccessGranted: false,
+    paymentVerified:
+      payment.status === PAYMENT_STATUSES.SUCCEEDED &&
+      payment.verificationStatus ===
+        PAYMENT_VERIFICATION_STATUSES.VERIFIED,
+    mediaAccessGranted:
+      payment.status === PAYMENT_STATUSES.SUCCEEDED &&
+      payment.verificationStatus ===
+        PAYMENT_VERIFICATION_STATUSES.VERIFIED,
     message,
   };
 };
 
-const markUnknownForReconciliation = async ({
+/**
+ * Mark an uncertain provider outcome.
+ *
+ * Never reset this payment to RESERVED.
+ * Never automatically submit another STK request.
+ */
+const markPaymentUnknown = async ({
   paymentId,
-  purchaseId,
-  reason,
+  errorCode = "MPESA_INITIATION_UNKNOWN",
 }) => {
-  try {
-    await recordMediaPaymentDispatchOutcome({
-      paymentId,
-      state: MEDIA_DISPATCH_STATES.UNKNOWN,
-      requiresManualReview: true,
-      manualReviewReason: reason,
-    });
-
-    const updatedPayment =
-      await PaymentTransaction.findById(paymentId);
-
-    if (!updatedPayment) {
-      throw createError(
-        "Payment could not be retrieved after reconciliation.",
-        503
-      );
+  await PaymentTransaction.updateOne(
+    {
+      _id: paymentId,
+      initiationStatus: {
+        $in: [
+          PAYMENT_INITIATION_STATUSES.DISPATCHING,
+          PAYMENT_INITIATION_STATUSES.ACCEPTED,
+        ],
+      },
+      verificationStatus:
+        PAYMENT_VERIFICATION_STATUSES.UNVERIFIED,
+    },
+    {
+      $set: {
+        initiationStatus:
+          PAYMENT_INITIATION_STATUSES.UNKNOWN,
+        status: PAYMENT_STATUSES.PROCESSING,
+        initiationErrorCode: errorCode,
+      },
+      $inc: {
+        __v: 1,
+      },
     }
+  );
 
-    return formatResult(updatedPayment, {
-      purchaseId: purchaseId.toString(),
-    });
-  } catch (error) {
-    /*
-     * Never automatically retry an STK request when its
-     * provider outcome or persistence outcome is uncertain.
-     */
+  const payment = await PaymentTransaction.findById(paymentId);
+
+  if (!payment) {
     throw createError(
-      "The M-Pesa request requires reconciliation. Do not submit a new payment request.",
-      503
+      "Payment requires reconciliation.",
+      503,
+      "MEDIA_PAYMENT_RECONCILIATION_REQUIRED"
     );
   }
+
+  return payment;
 };
 
+/**
+ * Initiate one M-Pesa STK Push for a media purchase.
+ *
+ * PaymentTransaction is the single source of truth.
+ * No MediaPaymentDispatch records or dispatch leases
+ * are required by this service.
+ */
 export const initiateMediaMpesaPayment = async ({
   buyerId,
   purchaseId,
@@ -164,21 +200,26 @@ export const initiateMediaMpesaPayment = async ({
   if (!config.paymentsEnabled) {
     throw createError(
       "M-Pesa payments are currently unavailable.",
-      503
+      503,
+      "MPESA_PAYMENTS_DISABLED"
     );
   }
 
   const normalizedPhone = normalizeMpesaPhone(phoneNumber);
-
   const phoneFingerprint =
     fingerprintMpesaPhone(normalizedPhone);
 
   const buyer = await User.findById(buyerId);
 
-  if (!buyer || !buyer.canAccessRestrictedContent()) {
+  if (
+    !buyer ||
+    typeof buyer.canAccessRestrictedContent !== "function" ||
+    !buyer.canAccessRestrictedContent()
+  ) {
     throw createError(
       "You are not eligible to purchase restricted media.",
-      403
+      403,
+      "BUYER_NOT_ELIGIBLE"
     );
   }
 
@@ -191,7 +232,8 @@ export const initiateMediaMpesaPayment = async ({
   if (!purchase) {
     throw createError(
       "Pending media purchase not found.",
-      404
+      404,
+      "MEDIA_PURCHASE_NOT_FOUND"
     );
   }
 
@@ -203,17 +245,14 @@ export const initiateMediaMpesaPayment = async ({
   ) {
     throw createError(
       "This media purchase has an invalid M-Pesa amount.",
-      400
+      400,
+      "INVALID_MPESA_MEDIA_AMOUNT"
     );
   }
 
   /*
-   * IDEMPOTENCY
-   *
-   * Reuse a payment only when its request ID, buyer,
-   * purchase, creator and financial snapshot match.
-   *
-   * A repeated request ID must never initiate another STK.
+   * A purchase already linked to a different payment
+   * must never be charged again through another request.
    */
   let payment = await PaymentTransaction.findOne({
     payerId: buyerId,
@@ -221,18 +260,20 @@ export const initiateMediaMpesaPayment = async ({
   });
 
   if (payment) {
-    if (
-      payment.creatorId.toString() !==
-        purchase.creatorId.toString() ||
-      payment.purpose !== PAYMENT_PURPOSES.MEDIA_PURCHASE ||
-      payment.provider !== PAYMENT_PROVIDERS.MPESA ||
-      payment.subscriptionId ||
-      payment.amountMinor !== purchase.amountMinor ||
-      payment.currency !== purchase.currency
-    ) {
+    const paymentMatchesPurchase =
+      payment.creatorId.toString() ===
+        purchase.creatorId.toString() &&
+      payment.purpose === PAYMENT_PURPOSES.MEDIA_PURCHASE &&
+      payment.provider === PAYMENT_PROVIDERS.MPESA &&
+      !payment.subscriptionId &&
+      payment.amountMinor === purchase.amountMinor &&
+      payment.currency === purchase.currency;
+
+    if (!paymentMatchesPurchase) {
       throw createError(
         "This request ID has already been used for another payment.",
-        409
+        409,
+        "PAYMENT_REQUEST_CONFLICT"
       );
     }
 
@@ -240,76 +281,33 @@ export const initiateMediaMpesaPayment = async ({
       payment.paymentPhoneFingerprint !== phoneFingerprint
     ) {
       throw createError(
-        "This request ID is already associated with a different phone number.",
-        409
+        "This request ID is associated with a different phone number.",
+        409,
+        "PAYMENT_PHONE_CONFLICT"
       );
     }
 
-    /*
-     * An existing payment must belong to the purchase's
-     * currently linked payment attempt.
-     */
     if (
       purchase.paymentId &&
       purchase.paymentId.toString() !== payment._id.toString()
     ) {
       throw createError(
         "This purchase is already linked to another payment.",
-        409
-      );
-    }
-
-    /*
-     * A payment that has progressed beyond RESERVED must
-     * already be linked to this exact purchase.
-     */
-    if (
-      payment.initiationStatus !==
-        PAYMENT_INITIATION_STATUSES.RESERVED &&
-      (
-        !purchase.paymentId ||
-        purchase.paymentId.toString() !== payment._id.toString()
-      )
-    ) {
-      throw createError(
-        "The existing payment is not linked to this purchase.",
-        409
+        409,
+        "MEDIA_PURCHASE_PAYMENT_CONFLICT"
       );
     }
   } else {
     /*
-     * A purchase linked to an earlier payment can only
-     * accept a new attempt after a confirmed rejection.
-     *
-     * UNKNOWN, ACCEPTED, DISPATCHING and all other
-     * non-rejected states remain blocked.
+     * Do not create a second payment for a purchase
+     * that already has an unresolved or completed attempt.
      */
     if (purchase.paymentId) {
-      const previousPayment =
-        await PaymentTransaction.findById(purchase.paymentId);
-
-      const previousDispatch =
-        await MediaPaymentDispatch.findOne({
-          mediaPurchaseId: purchase._id,
-          paymentId: purchase.paymentId,
-        });
-
-      const previousAttemptWasDefinitelyRejected =
-        previousPayment?.status === PAYMENT_STATUSES.FAILED &&
-        previousPayment?.initiationStatus ===
-          PAYMENT_INITIATION_STATUSES.REJECTED &&
-        previousPayment?.verificationStatus ===
-          PAYMENT_VERIFICATION_STATUSES.UNVERIFIED &&
-        previousDispatch?.state ===
-          MEDIA_DISPATCH_STATES.REJECTED &&
-        previousDispatch?.requiresManualReview === false;
-
-      if (!previousAttemptWasDefinitelyRejected) {
-        throw createError(
-          "This purchase is already linked to a payment that requires reconciliation.",
-          409
-        );
-      }
+      throw createError(
+        "This purchase already has a payment attempt. Its outcome must be resolved before another payment can be initiated.",
+        409,
+        "MEDIA_PURCHASE_PAYMENT_ALREADY_LINKED"
+      );
     }
 
     try {
@@ -330,62 +328,34 @@ export const initiateMediaMpesaPayment = async ({
           PAYMENT_INITIATION_STATUSES.RESERVED,
       });
     } catch (error) {
-      if (error.code === 11000) {
-        throw createError(
-          "A payment request with this ID already exists. Retry using the same request ID.",
-          409
-        );
+      if (error?.code === 11000) {
+        const existingPayment =
+          await PaymentTransaction.findOne({
+            payerId: buyerId,
+            clientRequestId: requestId,
+          });
+
+        if (existingPayment) {
+          payment = existingPayment;
+        } else {
+          throw createError(
+            "A payment request with this identifier already exists.",
+            409,
+            "PAYMENT_REQUEST_CONFLICT"
+          );
+        }
+      } else {
+        throw error;
       }
-
-      throw error;
     }
   }
 
   /*
-   * A dispatch record for this exact payment is authoritative
-   * evidence that this payment attempt has already progressed.
+   * Link before dispatch.
    *
-   * Never send another STK request for the same payment.
-   */
-  const existingDispatch =
-    await MediaPaymentDispatch.findOne({
-      paymentId: payment._id,
-    });
-
-  if (existingDispatch) {
-    const latestPayment =
-      await PaymentTransaction.findById(payment._id);
-
-    if (!latestPayment) {
-      throw createError(
-        "Payment record not found.",
-        404
-      );
-    }
-
-    return formatResult(latestPayment, {
-      purchaseId: purchase._id.toString(),
-    });
-  }
-
-  /*
-   * A non-RESERVED payment without a dispatch record must
-   * not be dispatched automatically.
-   */
-  if (
-    payment.initiationStatus !==
-    PAYMENT_INITIATION_STATUSES.RESERVED
-  ) {
-    return formatResult(payment, {
-      purchaseId: purchase._id.toString(),
-    });
-  }
-
-  /*
-   * Link the payment to the purchase before dispatch.
-   *
-   * The linking service must permit replacing an old payment
-   * only when that old attempt was definitely rejected.
+   * If the process stops after creating the payment but
+   * before linking it, the same request ID can safely
+   * resume this step.
    */
   await linkMediaPurchasePayment({
     buyerId,
@@ -394,30 +364,84 @@ export const initiateMediaMpesaPayment = async ({
   });
 
   /*
-   * Atomically authorize this one-time dispatch.
-   *
-   * A previously rejected dispatch is reused by the dispatch
-   * service. An UNKNOWN or ACCEPTED dispatch blocks this step.
+   * Return existing payment states without resubmitting.
    */
-  await authorizeMediaPaymentDispatch({
-    buyerId,
-    purchaseId,
-    paymentId: payment._id,
-  });
+  if (
+    payment.initiationStatus !==
+    PAYMENT_INITIATION_STATUSES.RESERVED
+  ) {
+    const latestPayment =
+      await PaymentTransaction.findById(payment._id);
+
+    if (!latestPayment) {
+      throw createError(
+        "Payment record not found.",
+        404,
+        "PAYMENT_NOT_FOUND"
+      );
+    }
+
+    return formatResult(latestPayment, purchase._id);
+  }
 
   /*
-   * The provider must not be called unless dispatch start
-   * has been successfully recorded.
+   * Atomic dispatch claim.
+   *
+   * Only one concurrent request can change RESERVED
+   * to DISPATCHING. A second request cannot submit STK.
+   *
+   * If the process crashes after this update, the payment
+   * remains DISPATCHING and cannot be automatically retried.
    */
-  await markMediaPaymentDispatchStarted({
-    paymentId: payment._id,
-  });
+  const claimedPayment =
+    await PaymentTransaction.findOneAndUpdate(
+      {
+        _id: payment._id,
+        payerId: buyerId,
+        purpose: PAYMENT_PURPOSES.MEDIA_PURCHASE,
+        provider: PAYMENT_PROVIDERS.MPESA,
+        status: PAYMENT_STATUSES.PENDING,
+        verificationStatus:
+          PAYMENT_VERIFICATION_STATUSES.UNVERIFIED,
+        initiationStatus:
+          PAYMENT_INITIATION_STATUSES.RESERVED,
+        providerTransactionId: null,
+        merchantRequestId: null,
+      },
+      {
+        $set: {
+          initiationStatus:
+            PAYMENT_INITIATION_STATUSES.DISPATCHING,
+          initiationClaimedAt: new Date(),
+        },
+        $inc: {
+          __v: 1,
+        },
+      },
+      {
+        new: true,
+        runValidators: true,
+      }
+    );
+
+  if (!claimedPayment) {
+    const latestPayment =
+      await PaymentTransaction.findById(payment._id);
+
+    if (!latestPayment) {
+      throw createError(
+        "Payment record not found.",
+        404,
+        "PAYMENT_NOT_FOUND"
+      );
+    }
+
+    return formatResult(latestPayment, purchase._id);
+  }
 
   /*
-   * Provider calls happen outside MongoDB transactions.
-   *
-   * A thrown error is UNKNOWN unless it carries explicit
-   * evidence that the STK request was never submitted.
+   * Only the request that successfully claimed DISPATCHING
+   * reaches the provider.
    */
   let providerResponse;
 
@@ -429,119 +453,138 @@ export const initiateMediaMpesaPayment = async ({
     });
   } catch (error) {
     /*
-     * OAuth happens before the STK POST.
-     *
-     * This tagged error is the only failure currently
-     * classified as a confirmed pre-submission rejection.
+     * OAuth failure occurs before the STK POST.
+     * This is the only currently recognized safe
+     * pre-submission rejection.
      */
     if (
       error?.code === "MPESA_OAUTH_FAILED" &&
       error?.stage === "OAUTH" &&
       error?.requestSubmitted === false
     ) {
-      try {
-        await recordMediaPaymentDispatchOutcome({
-          paymentId: payment._id,
-          state: MEDIA_DISPATCH_STATES.REJECTED,
-          requiresManualReview: false,
-          manualReviewReason: null,
-          confirmedNotSubmitted: true,
-        });
-      } catch (recordError) {
-        /*
-         * If rejection persistence is uncertain, do not
-         * assume the attempt is retryable.
-         */
-        return markUnknownForReconciliation({
-          paymentId: payment._id,
-          purchaseId: purchase._id,
-          reason:
-            "OAuth failed before STK submission, but the rejection outcome could not be safely persisted.",
-        });
-      }
+      await PaymentTransaction.updateOne(
+        {
+          _id: payment._id,
+          initiationStatus:
+            PAYMENT_INITIATION_STATUSES.DISPATCHING,
+          verificationStatus:
+            PAYMENT_VERIFICATION_STATUSES.UNVERIFIED,
+        },
+        {
+          $set: {
+            initiationStatus:
+              PAYMENT_INITIATION_STATUSES.REJECTED,
+            status: PAYMENT_STATUSES.FAILED,
+            failureReason: "UNKNOWN",
+            failureMessage:
+              "M-Pesa authorization failed before the STK request was submitted.",
+            initiationErrorCode: "MPESA_OAUTH_FAILED",
+          },
+          $inc: {
+            __v: 1,
+          },
+        }
+      );
 
       const rejectedPayment =
         await PaymentTransaction.findById(payment._id);
 
       if (!rejectedPayment) {
         throw createError(
-          "Rejected payment could not be retrieved.",
-          503
+          "Payment rejection could not be confirmed.",
+          503,
+          "PAYMENT_STATE_UNCERTAIN"
         );
       }
 
-      return formatResult(rejectedPayment, {
-        purchaseId: purchase._id.toString(),
-      });
+      return formatResult(rejectedPayment, purchase._id);
     }
 
     /*
-     * Network timeouts, connection resets, and unclassified
-     * provider errors remain UNKNOWN. Never resend automatically.
+     * Once the STK POST might have been submitted,
+     * network and provider errors are UNKNOWN.
      */
-    return markUnknownForReconciliation({
+    const unknownPayment = await markPaymentUnknown({
       paymentId: payment._id,
-      purchaseId: purchase._id,
-      reason:
-        "M-Pesa initiation outcome could not be confirmed.",
+      errorCode:
+        typeof error?.code === "string"
+          ? error.code.slice(0, 100)
+          : "MPESA_INITIATION_UNKNOWN",
     });
+
+    return formatResult(unknownPayment, purchase._id);
   }
 
-  /*
-   * Missing identifiers or an unaccepted response cannot
-   * be treated as confirmed settlement or safe rejection.
-   */
   if (
     !providerResponse?.accepted ||
-    !providerResponse?.checkoutRequestId ||
-    !providerResponse?.merchantRequestId
+    typeof providerResponse.checkoutRequestId !== "string" ||
+    !providerResponse.checkoutRequestId.trim() ||
+    typeof providerResponse.merchantRequestId !== "string" ||
+    !providerResponse.merchantRequestId.trim()
   ) {
-    return markUnknownForReconciliation({
+    const unknownPayment = await markPaymentUnknown({
       paymentId: payment._id,
-      purchaseId: purchase._id,
-      reason:
-        "M-Pesa response did not contain the required identifiers.",
+      errorCode: "MPESA_RESPONSE_IDENTIFIERS_MISSING",
     });
+
+    return formatResult(unknownPayment, purchase._id);
   }
 
   /*
-   * Record provider acceptance and identifiers atomically.
-   *
-   * ACCEPTED does not mean payment is verified or media
-   * access can be granted.
+   * Safaricom accepted the STK request.
+   * This is not proof of payment.
    */
   try {
-    await recordMediaPaymentDispatchOutcome({
-      paymentId: payment._id,
-      state: MEDIA_DISPATCH_STATES.ACCEPTED,
-      requiresManualReview: false,
-      checkoutRequestId: providerResponse.checkoutRequestId,
-      merchantRequestId: providerResponse.merchantRequestId,
-    });
+    const acceptedPayment =
+      await PaymentTransaction.findOneAndUpdate(
+        {
+          _id: payment._id,
+          initiationStatus:
+            PAYMENT_INITIATION_STATUSES.DISPATCHING,
+          verificationStatus:
+            PAYMENT_VERIFICATION_STATUSES.UNVERIFIED,
+        },
+        {
+          $set: {
+            initiationStatus:
+              PAYMENT_INITIATION_STATUSES.ACCEPTED,
+            status: PAYMENT_STATUSES.PROCESSING,
+            providerTransactionId:
+              providerResponse.checkoutRequestId.trim(),
+            merchantRequestId:
+              providerResponse.merchantRequestId.trim(),
+            initiationAcceptedAt: new Date(),
+            initiationErrorCode: null,
+          },
+          $inc: {
+            __v: 1,
+          },
+        },
+        {
+          new: true,
+          runValidators: true,
+        }
+      );
+
+    if (!acceptedPayment) {
+      throw createError(
+        "Provider acceptance could not be saved.",
+        503,
+        "MPESA_ACCEPTANCE_PERSISTENCE_FAILED"
+      );
+    }
+
+    return formatResult(acceptedPayment, purchase._id);
   } catch (error) {
     /*
-     * The provider may already have accepted the request.
-     * Never resend the STK request.
+     * Safaricom may already have accepted the request.
+     * Never send it again because local persistence failed.
      */
-    return markUnknownForReconciliation({
+    const unknownPayment = await markPaymentUnknown({
       paymentId: payment._id,
-      purchaseId: purchase._id,
-      reason:
-        "M-Pesa may have accepted the request, but acceptance could not be safely persisted.",
+      errorCode: "MPESA_ACCEPTANCE_PERSISTENCE_FAILED",
     });
+
+    return formatResult(unknownPayment, purchase._id);
   }
-
-  const updatedPayment =
-    await PaymentTransaction.findById(payment._id);
-
-  if (!updatedPayment) {
-    throw createError(
-      "Payment record could not be retrieved.",
-      503
-    );
-  }
-
-  return formatResult(updatedPayment, {
-    purchaseId: purchase._id.toString(),
-  });
 };

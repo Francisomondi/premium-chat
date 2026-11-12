@@ -1,3 +1,4 @@
+
 import { Router } from "express";
 
 import { requireAuth } from "../middleware/auth.middleware.js";
@@ -20,12 +21,14 @@ import {
 
 import {
   createMediaPurchaseController,
+  getMediaPurchaseStatusController,
 } from "../controllers/mediaPurchase.controller.js";
 
 import {
   createMediaUploadSchema,
   createMediaPurchaseSchema,
   mediaIdParamsSchema,
+  mediaPurchaseIdParamsSchema,
 } from "../validators/media.validators.js";
 
 const router = Router();
@@ -70,6 +73,21 @@ router.post(
   }),
   messageRateLimit,
   createMediaPurchaseController
+);
+
+/*
+ * REFRESH PAID-MEDIA PURCHASE STATUS
+ *
+ * Does not initiate another STK Push.
+ * Financial verification is performed server-side.
+ */
+router.get(
+  "/purchases/:purchaseId/status",
+  validate({
+    params: mediaPurchaseIdParamsSchema,
+  }),
+  messageRateLimit,
+  getMediaPurchaseStatusController
 );
 
 /*

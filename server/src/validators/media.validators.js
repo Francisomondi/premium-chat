@@ -112,6 +112,16 @@ export const mediaIdParamsSchema = z
   })
   .strict();
 
+
+  /**
+ * GET /api/media/purchases/:purchaseId/status
+ */
+export const mediaPurchaseIdParamsSchema = z
+  .object({
+    purchaseId: objectIdSchema,
+  })
+  .strict();
+
   /**
  * POST /api/media/:mediaId/purchase
  *

@@ -1,3 +1,4 @@
+
 import {
   getMpesaConfig,
 } from "./mpesa.config.js";
@@ -14,11 +15,13 @@ export const MPESA_QUERY_OPERATION_TIMEOUT_MS = 45_000;
  * 1. Obtain OAuth access tokens.
  * 2. Initiate STK Push requests.
  * 3. Query STK Push transaction outcomes.
+ * 4. Query M-Pesa transaction status.
  *
  * SECURITY:
  *
  * - Never exposes credentials.
- * - Never modifies subscription records.
+ * - Never logs phone numbers or payment passwords.
+ * - Never modifies payment or subscription records.
  * - Never marks payments verified.
  * - Never activates subscriptions.
  *
@@ -27,39 +30,165 @@ export const MPESA_QUERY_OPERATION_TIMEOUT_MS = 45_000;
 
 const REQUEST_TIMEOUT_MS = 15000;
 
-
 let cachedToken = null;
 
 let tokenExpiresAt = 0;
 
 /**
  * ============================================================
+ * STRUCTURED M-PESA DIAGNOSTIC LOGGING
+ * ============================================================
+ *
+ * Never pass credentials, request payloads, phone numbers,
+ * access tokens, passwords or security credentials here.
+ */
+
+const logMpesaDiagnostic = (
+  event,
+  details = {}
+) => {
+  const entry = {
+    timestamp: new Date().toISOString(),
+    event,
+    ...details,
+  };
+
+  console.info(
+    "[MPESA_DIAGNOSTIC]",
+    JSON.stringify(entry)
+  );
+};
+
+/**
+ * ============================================================
  * HTTP REQUEST HELPER
  * ============================================================
+ *
+ * stkRequestSubmitted means whether the actual STK Push
+ * request may have been submitted.
+ *
+ * It is deliberately false for OAuth and reconciliation
+ * requests because those are not the original STK Push.
+ *
+ * For an STK POST, it is true as soon as fetch is attempted.
+ * This is conservative: a network failure does not prove
+ * whether Safaricom received the request.
  */
 
 const requestJson = async (
   url,
-  options = {}
+  options = {},
+  context = {}
 ) => {
-  const response = await fetch(url, {
-    ...options,
+  const {
+    stage = "UNKNOWN",
+    stkRequestSubmitted = false,
+  } = context;
 
-    signal: AbortSignal.timeout(
-      REQUEST_TIMEOUT_MS
-    ),
+  logMpesaDiagnostic("REQUEST_STARTED", {
+    stage,
+    stkRequestSubmitted,
   });
 
-  const raw = await response.text();
+  let response;
+
+  try {
+    response = await fetch(url, {
+      ...options,
+
+      signal: AbortSignal.timeout(
+        REQUEST_TIMEOUT_MS
+      ),
+    });
+  } catch (cause) {
+    const error = new Error(
+      `Daraja ${stage} network request failed.`
+    );
+
+    error.code = "MPESA_NETWORK_ERROR";
+    error.stage = stage;
+    error.requestSubmitted =
+      stkRequestSubmitted;
+    error.cause = cause;
+
+    console.error(
+      "[MPESA_DIAGNOSTIC]",
+      {
+        event: "REQUEST_NETWORK_FAILURE",
+        stage,
+        stkRequestSubmitted,
+        errorName:
+          cause?.name || "UnknownError",
+        errorCode:
+          cause?.code || null,
+      }
+    );
+
+    throw error;
+  }
+
+  let raw;
+
+  try {
+    raw = await response.text();
+  } catch (cause) {
+    const error = new Error(
+      `Daraja ${stage} response could not be read.`
+    );
+
+    error.code =
+      "MPESA_RESPONSE_READ_FAILED";
+
+    error.stage = stage;
+
+    error.requestSubmitted =
+      stkRequestSubmitted;
+
+    error.cause = cause;
+
+    console.error(
+      "[MPESA_DIAGNOSTIC]",
+      {
+        event: "RESPONSE_READ_FAILURE",
+        stage,
+        stkRequestSubmitted,
+        httpStatus: response.status,
+        errorName:
+          cause?.name || "UnknownError",
+      }
+    );
+
+    throw error;
+  }
 
   let data;
 
   try {
     data = JSON.parse(raw);
-  } catch {
-    throw new Error(
+  } catch (cause) {
+    const error = new Error(
       "Daraja returned an invalid JSON response."
     );
+
+    error.code = "MPESA_INVALID_JSON";
+    error.stage = stage;
+
+    error.requestSubmitted =
+      stkRequestSubmitted;
+
+    error.cause = cause;
+
+    console.error(
+      "[MPESA_DIAGNOSTIC]",
+      {
+        event: "INVALID_JSON_RESPONSE",
+        stage,
+        stkRequestSubmitted,
+        httpStatus: response.status,
+      }
+    );
+
+    throw error;
   }
 
   if (!response.ok) {
@@ -72,8 +201,51 @@ const requestJson = async (
     error.providerErrorCode =
       data?.errorCode || null;
 
+    error.stage = stage;
+
+    error.requestSubmitted =
+      stkRequestSubmitted;
+
+    console.error(
+      "[MPESA_DIAGNOSTIC]",
+      {
+        event: "HTTP_FAILURE",
+        stage,
+        stkRequestSubmitted,
+        httpStatus: response.status,
+        providerErrorCode:
+          error.providerErrorCode,
+      }
+    );
+
     throw error;
   }
+
+  logMpesaDiagnostic(
+    "REQUEST_RESPONSE_RECEIVED",
+    {
+      stage,
+      stkRequestSubmitted,
+      httpStatus: response.status,
+
+      providerResponseCode:
+        data?.ResponseCode ?? null,
+
+      checkoutRequestIdPresent:
+        Boolean(data?.CheckoutRequestID),
+
+      merchantRequestIdPresent:
+        Boolean(data?.MerchantRequestID),
+
+      conversationIdPresent:
+        Boolean(data?.ConversationID),
+
+      originatorConversationIdPresent:
+        Boolean(
+          data?.OriginatorConversationID
+        ),
+    }
+  );
 
   return data;
 };
@@ -90,6 +262,10 @@ export const getMpesaAccessToken =
       cachedToken &&
       Date.now() < tokenExpiresAt
     ) {
+      logMpesaDiagnostic(
+        "OAUTH_CACHED_TOKEN_USED"
+      );
+
       return cachedToken;
     }
 
@@ -108,6 +284,10 @@ export const getMpesaAccessToken =
           Authorization:
             `Basic ${credentials}`,
         },
+      },
+      {
+        stage: "OAUTH",
+        stkRequestSubmitted: false,
       }
     );
 
@@ -115,6 +295,10 @@ export const getMpesaAccessToken =
       typeof data?.access_token !== "string" ||
       !data.access_token
     ) {
+      logMpesaDiagnostic(
+        "OAUTH_TOKEN_MISSING"
+      );
+
       throw new Error(
         "Daraja did not return an access token."
       );
@@ -127,6 +311,10 @@ export const getMpesaAccessToken =
       !Number.isFinite(expiresIn) ||
       expiresIn <= 0
     ) {
+      logMpesaDiagnostic(
+        "OAUTH_INVALID_TOKEN_LIFETIME"
+      );
+
       throw new Error(
         "Daraja returned an invalid token lifetime."
       );
@@ -140,6 +328,13 @@ export const getMpesaAccessToken =
         0,
         expiresIn - 60
       ) * 1000;
+
+    logMpesaDiagnostic(
+      "OAUTH_TOKEN_ACQUIRED",
+      {
+        expiresInSeconds: expiresIn,
+      }
+    );
 
     return cachedToken;
   };
@@ -302,7 +497,7 @@ export const convertMinorToKes = (
  * initiation service that has already:
  *
  * - Authenticated the subscriber.
- * - Validated the subscription.
+ * - Validated the purchase.
  * - Calculated the payment amount.
  * - Created an idempotent payment attempt.
  *
@@ -351,15 +546,28 @@ export const initiateMpesaStkPush =
         timestamp
       );
 
-   let accessToken;
+    let accessToken;
 
     try {
-      accessToken = await getMpesaAccessToken();
+      accessToken =
+        await getMpesaAccessToken();
     } catch (cause) {
       /*
-      * OAuth happens before the STK POST.
-      * This invocation has not submitted an STK request.
-      */
+       * OAuth happens before the STK POST.
+       * This invocation has not submitted an STK request.
+       */
+
+      logMpesaDiagnostic(
+        "STK_INITIATION_ABORTED_OAUTH",
+        {
+          stkRequestSubmitted: false,
+          causeCode:
+            cause?.code || null,
+          causeStage:
+            cause?.stage || "OAUTH",
+        }
+      );
+
       const error = new Error(
         "M-Pesa OAuth token acquisition failed."
       );
@@ -407,33 +615,95 @@ export const initiateMpesaStkPush =
         "PremiumChat",
     };
 
-    const data = await requestJson(
-      `${config.baseUrl}/mpesa/stkpush/v1/processrequest`,
+    logMpesaDiagnostic(
+      "STK_POST_ABOUT_TO_SUBMIT",
       {
-        method: "POST",
-
-        headers: {
-          Authorization:
-            `Bearer ${accessToken}`,
-
-          "Content-Type":
-            "application/json",
-        },
-
-        body:
-          JSON.stringify(payload),
+        stkRequestSubmitted: false,
       }
     );
+
+    let data;
+
+    try {
+      data = await requestJson(
+        `${config.baseUrl}/mpesa/stkpush/v1/processrequest`,
+        {
+          method: "POST",
+
+          headers: {
+            Authorization:
+              `Bearer ${accessToken}`,
+
+            "Content-Type":
+              "application/json",
+          },
+
+          body:
+            JSON.stringify(payload),
+        },
+        {
+          stage: "STK_POST",
+          stkRequestSubmitted: true,
+        }
+      );
+    } catch (cause) {
+      /*
+       * Once the STK POST is attempted, a network,
+       * timeout, HTTP or response parsing error does
+       * not prove Safaricom failed to receive it.
+       *
+       * Do not classify this as a safe rejection.
+       */
+
+      logMpesaDiagnostic(
+        "STK_POST_OUTCOME_UNCERTAIN",
+        {
+          stkRequestSubmitted: true,
+          errorCode:
+            cause?.code || null,
+          errorStage:
+            cause?.stage || "STK_POST",
+          httpStatus:
+            cause?.statusCode || null,
+          providerErrorCode:
+            cause?.providerErrorCode || null,
+        }
+      );
+
+      throw cause;
+    }
 
     if (
       String(data?.ResponseCode) !== "0" ||
       !data?.CheckoutRequestID ||
       !data?.MerchantRequestID
     ) {
+      logMpesaDiagnostic(
+        "STK_PROVIDER_ACCEPTANCE_NOT_CONFIRMED",
+        {
+          stkRequestSubmitted: true,
+          providerResponseCode:
+            data?.ResponseCode ?? null,
+          checkoutRequestIdPresent:
+            Boolean(data?.CheckoutRequestID),
+          merchantRequestIdPresent:
+            Boolean(data?.MerchantRequestID),
+        }
+      );
+
       throw new Error(
         "Daraja did not accept the STK Push request."
       );
     }
+
+    logMpesaDiagnostic(
+      "STK_PROVIDER_ACCEPTED",
+      {
+        stkRequestSubmitted: true,
+        checkoutRequestIdPresent: true,
+        merchantRequestIdPresent: true,
+      }
+    );
 
     return {
       accepted: true,
@@ -516,6 +786,10 @@ export const queryMpesaStkStatus =
           CheckoutRequestID:
             checkoutRequestId,
         }),
+      },
+      {
+        stage: "STK_QUERY",
+        stkRequestSubmitted: false,
       }
     );
 
@@ -548,6 +822,7 @@ export const queryMpesaStkStatus =
        * still match this result to the
        * original payment attempt.
        */
+
       providerReportsSuccess:
         responseCode === "0" &&
         resultCode === "0",
@@ -556,7 +831,7 @@ export const queryMpesaStkStatus =
     };
   };
 
-  /**
+/**
  * ============================================================
  * PREMIUMCHAT — QUERY M-PESA TRANSACTION STATUS
  * ============================================================
@@ -570,103 +845,145 @@ export const queryMpesaStkStatus =
  * - Does not update payment or subscription records.
  */
 
-export const queryMpesaTransactionStatus = async ({
-  receiptNumber,
-  remarks = "PremiumChat payment verification",
-}) => {
-  const config = getMpesaConfig();
-
-  if (
-    !config.transactionStatusEnabled ||
-    !config.transactionStatus
-  ) {
-    throw new Error(
-      "M-Pesa Transaction Status is not enabled."
-    );
-  }
-
-  if (
-    typeof receiptNumber !== "string" ||
-    !/^[A-Za-z0-9]{8,30}$/.test(receiptNumber)
-  ) {
-    throw new Error(
-      "Invalid M-Pesa receipt number."
-    );
-  }
-
-  const accessToken =
-    await getMpesaAccessToken();
-
-  const {
-    initiatorName,
-    securityCredential,
-    resultUrl,
-    timeoutUrl,
-  } = config.transactionStatus;
-
-  const payload = {
-    Initiator: initiatorName,
-
-    SecurityCredential: securityCredential,
-
-    CommandID: "TransactionStatusQuery",
-
-    TransactionID: receiptNumber,
-
-    PartyA: config.shortcode,
-
-    IdentifierType: "4",
-
-    ResultURL: resultUrl,
-
-    QueueTimeOutURL: timeoutUrl,
-
-    Remarks: remarks,
-
-    Occasion: "PremiumChat",
-  };
-
-  const data = await requestJson(
-    `${config.baseUrl}/mpesa/transactionstatus/v1/query`,
-    {
-      method: "POST",
-
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-
-        "Content-Type": "application/json",
-      },
-
-      body: JSON.stringify(payload),
-    }
-  );
-
-  const responseCode =
-    String(data?.ResponseCode ?? "");
-
-  if (
-    responseCode !== "0" ||
-    !data?.ConversationID ||
-    !data?.OriginatorConversationID
-  ) {
-    throw new Error(
-      "Safaricom did not accept the transaction status enquiry."
-    );
-  }
-
-  return {
-    accepted: true,
-
+export const queryMpesaTransactionStatus =
+  async ({
     receiptNumber,
+    remarks = "PremiumChat payment verification",
+  }) => {
+    const config = getMpesaConfig();
 
-    conversationId: data.ConversationID,
+    if (
+      !config.transactionStatusEnabled ||
+      !config.transactionStatus
+    ) {
+      throw new Error(
+        "M-Pesa Transaction Status is not enabled."
+      );
+    }
 
-    originatorConversationId:
-      data.OriginatorConversationID,
+    if (
+      typeof receiptNumber !== "string" ||
+      !/^[A-Za-z0-9]{8,30}$/.test(
+        receiptNumber
+      )
+    ) {
+      throw new Error(
+        "Invalid M-Pesa receipt number."
+      );
+    }
 
-    responseCode,
+    const accessToken =
+      await getMpesaAccessToken();
 
-    responseDescription:
-      data.ResponseDescription || null,
+    const {
+      initiatorName,
+      securityCredential,
+      resultUrl,
+      timeoutUrl,
+    } = config.transactionStatus;
+
+    const payload = {
+      Initiator: initiatorName,
+
+      SecurityCredential:
+        securityCredential,
+
+      CommandID:
+        "TransactionStatusQuery",
+
+      TransactionID:
+        receiptNumber,
+
+      PartyA:
+        config.shortcode,
+
+      IdentifierType:
+        "4",
+
+      ResultURL:
+        resultUrl,
+
+      QueueTimeOutURL:
+        timeoutUrl,
+
+      Remarks:
+        remarks,
+
+      Occasion:
+        "PremiumChat",
+    };
+
+    const data = await requestJson(
+      `${config.baseUrl}/mpesa/transactionstatus/v1/query`,
+      {
+        method: "POST",
+
+        headers: {
+          Authorization:
+            `Bearer ${accessToken}`,
+
+          "Content-Type":
+            "application/json",
+        },
+
+        body:
+          JSON.stringify(payload),
+      },
+      {
+        stage: "TRANSACTION_STATUS",
+        stkRequestSubmitted: false,
+      }
+    );
+
+    const responseCode =
+      String(data?.ResponseCode ?? "");
+
+    if (
+      responseCode !== "0" ||
+      !data?.ConversationID ||
+      !data?.OriginatorConversationID
+    ) {
+      logMpesaDiagnostic(
+        "TRANSACTION_STATUS_NOT_ACCEPTED",
+        {
+          providerResponseCode:
+            responseCode || null,
+          conversationIdPresent:
+            Boolean(data?.ConversationID),
+          originatorConversationIdPresent:
+            Boolean(
+              data?.OriginatorConversationID
+            ),
+        }
+      );
+
+      throw new Error(
+        "Safaricom did not accept the transaction status enquiry."
+      );
+    }
+
+    logMpesaDiagnostic(
+      "TRANSACTION_STATUS_ACCEPTED",
+      {
+        conversationIdPresent: true,
+        originatorConversationIdPresent: true,
+      }
+    );
+
+    return {
+      accepted: true,
+
+      receiptNumber,
+
+      conversationId:
+        data.ConversationID,
+
+      originatorConversationId:
+        data.OriginatorConversationID,
+
+      responseCode,
+
+      responseDescription:
+        data.ResponseDescription || null,
+    };
   };
-};

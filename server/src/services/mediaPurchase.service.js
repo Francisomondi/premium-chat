@@ -14,10 +14,6 @@ import MediaPurchase, {
 
 import PaymentTransaction from "../models/PaymentTransaction.model.js";
 
-import MediaPaymentDispatch, {
-  MEDIA_DISPATCH_STATES,
-} from "../models/MediaPaymentDispatch.model.js";
-
 import {
   PAYMENT_PURPOSES,
   PAYMENT_STATUSES,
@@ -106,7 +102,7 @@ const reserveMediaPurchase = async ({
 
   const creatorId = media.creatorId.toString();
 
-  if (creatorId === buyerId) {
+  if (creatorId === buyerId.toString()) {
     throw new AppError(
       "You cannot purchase your own media.",
       403,
@@ -147,16 +143,6 @@ const reserveMediaPurchase = async ({
     );
   }
 
-  /*
-   * Paid-media purchases are available as a platform feature.
-   *
-   * Creator-level monetization switches do not disable an
-   * otherwise eligible individual media purchase.
-   *
-   * Media approval, access policy, price, buyer eligibility,
-   * and payment verification remain mandatory.
-   */
-
   const existingRequest = await MediaPurchase.findOne({
     buyerId,
     clientRequestId,
@@ -164,7 +150,7 @@ const reserveMediaPurchase = async ({
 
   if (existingRequest) {
     const sameRequest =
-      existingRequest.mediaId.toString() === mediaId &&
+      existingRequest.mediaId.toString() === mediaId.toString() &&
       existingRequest.creatorId.toString() === creatorId &&
       existingRequest.amountMinor === media.priceMinor &&
       existingRequest.currency === media.currency;
@@ -183,12 +169,6 @@ const reserveMediaPurchase = async ({
     };
   }
 
-  /*
-   * Reuse an existing pending or active purchase.
-   *
-   * A new payment attempt does not require creating another
-   * MediaPurchase document.
-   */
   const existingPurchase = await MediaPurchase.findOne({
     buyerId,
     mediaId,
@@ -233,7 +213,7 @@ const reserveMediaPurchase = async ({
 
       if (replay) {
         const sameRequest =
-          replay.mediaId.toString() === mediaId &&
+          replay.mediaId.toString() === mediaId.toString() &&
           replay.creatorId.toString() === creatorId &&
           replay.amountMinor === media.priceMinor &&
           replay.currency === media.currency;
@@ -257,6 +237,16 @@ const reserveMediaPurchase = async ({
   }
 };
 
+/**
+ * Link one payment to a pending purchase.
+ *
+ * A purchase can only ever be linked to one payment.
+ * Even a rejected or unresolved payment is not silently
+ * replaced by a new payment attempt.
+ *
+ * This protects previously initiated payments from
+ * accidental duplicate STK Push requests.
+ */
 const linkMediaPurchasePayment = async ({
   buyerId,
   purchaseId,
@@ -303,10 +293,7 @@ const linkMediaPurchasePayment = async ({
         );
       }
 
-      /*
-       * If this exact payment is already linked, this operation
-       * is an idempotent replay.
-       */
+      // Exact replay: the purchase is already linked to this payment.
       if (
         purchase.paymentId &&
         purchase.paymentId.toString() === paymentId.toString()
@@ -319,48 +306,15 @@ const linkMediaPurchasePayment = async ({
         return;
       }
 
-      /*
-       * A different existing payment can only be replaced
-       * after a confirmed rejection before STK submission.
-       *
-       * UNKNOWN, ACCEPTED, DISPATCHING, and all other states
-       * must continue blocking replacement.
-       */
+      // Never replace an existing payment reference.
       if (purchase.paymentId) {
-        const previousPayment =
-          await PaymentTransaction.findById(
-            purchase.paymentId
-          ).session(session);
-
-        const previousDispatch =
-          await MediaPaymentDispatch.findOne({
-            mediaPurchaseId: purchase._id,
-            paymentId: purchase.paymentId,
-          }).session(session);
-
-        const previousAttemptWasDefinitelyRejected =
-          previousPayment?.status === PAYMENT_STATUSES.FAILED &&
-          previousPayment?.initiationStatus ===
-            PAYMENT_INITIATION_STATUSES.REJECTED &&
-          previousPayment?.verificationStatus ===
-            PAYMENT_VERIFICATION_STATUSES.UNVERIFIED &&
-          previousDispatch?.state ===
-            MEDIA_DISPATCH_STATES.REJECTED &&
-          previousDispatch?.requiresManualReview === false;
-
-        if (!previousAttemptWasDefinitelyRejected) {
-          throw new AppError(
-            "A different payment is already linked to this purchase and requires reconciliation.",
-            409,
-            "MEDIA_PURCHASE_PAYMENT_CONFLICT"
-          );
-        }
+        throw new AppError(
+          "This purchase already has a payment attempt. Its outcome must be resolved before another payment can be made.",
+          409,
+          "MEDIA_PURCHASE_PAYMENT_ALREADY_LINKED"
+        );
       }
 
-      /*
-       * Validate the new payment against the immutable
-       * purchase financial snapshot.
-       */
       const payment = await PaymentTransaction.findOne({
         _id: paymentId,
         payerId: buyerId,
@@ -379,36 +333,25 @@ const linkMediaPurchasePayment = async ({
 
       if (!payment) {
         throw new AppError(
-          "Payment does not match this purchase or is not available for dispatch.",
+          "Payment does not match this purchase or is not available for initiation.",
           409,
           "MEDIA_PAYMENT_NOT_LINKABLE"
         );
       }
 
-      /*
-       * Compare-and-set:
-       *
-       * Only replace the payment link if it still contains
-       * the exact previous value we checked above.
-       *
-       * This prevents concurrent requests from silently
-       * overwriting another payment attempt.
-       */
       const updateResult = await MediaPurchase.updateOne(
         {
           _id: purchase._id,
           buyerId,
           status: MEDIA_PURCHASE_STATUSES.PENDING,
-          paymentId: purchase.paymentId ?? null,
+          paymentId: null,
         },
         {
           $set: {
             paymentId: payment._id,
           },
         },
-        {
-          session,
-        }
+        { session }
       );
 
       if (updateResult.modifiedCount !== 1) {
